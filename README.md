@@ -1,4 +1,3 @@
-```python?code_reference&code_event_index=2
 markdown_content = """# BioFin Oracle
 
 **The Z.AI Decision Brain for Malaysian Agri-Fintech.** Moving SME orchard owners from weather-dependent gambles to data-driven operational management.
@@ -116,5 +115,4 @@ The system architecture dictates strict operational boundaries:
 * **Tan Liang Chuan:** Lead AI Orchestrator
 * **Thet Htun Oakar & Ng Yi Ren:** Backend Lead
 * **Tan Li Hong & Chen Bing Yan:** Frontend Lead
-"""
-```
+
