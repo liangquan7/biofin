@@ -1,7 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  experimental: {
+    serverActions: {
+      timeoutSeconds: 120,
+    },
+  },
 };
 
 export default nextConfig;

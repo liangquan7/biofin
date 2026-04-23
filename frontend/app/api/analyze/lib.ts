@@ -1,86 +1,79 @@
-import { NextRequest, NextResponse } from 'next/server';
-export const maxDuration = 300;
-// --- API Config ---------------------------------------------------------------
-// Keys are loaded from environment variables — never hardcode secrets in source.
-// Create a .env.local file (gitignored) with the variables below.
-// See .env.local.example in the project root for the required variable names.
+// --- Numeric helpers (used for pre-processing & fallback) --------------------
 
-const ZAI_API_KEY = process.env.ZAI_API_KEY ?? '';
-const ZAI_MODEL   = process.env.ZAI_MODEL   ?? 'ilmu-glm-5.1';
-const ZAI_BASE_URL = process.env.ZAI_BASE_URL ?? 'https://api.ilmu.ai/v1/chat/completions';
+export const num   = (v: string | undefined, fb = 0) => { const n = parseFloat(v ?? ''); return isFinite(n) ? n : fb; };
+export const avg   = (a: number[]) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
+export const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
-const TAVILY_URL    = 'https://api.tavily.com/search';
-const TAVILY_KEY    = process.env.TAVILY_API_KEY ?? '';
+// Computes a human-readable trend description for the LLM.
+export function trendLabel(series: number[], unit = ''): string {
+  if (series.length < 2) return 'stable (single record)';
+  const overall   = avg(series);
+  const recentN   = Math.min(3, series.length);
+  const recent    = avg(series.slice(-recentN));
+  if (overall === 0) return 'stable';
+  const changePct = ((recent - overall) / Math.abs(overall)) * 100;
+  const direction = changePct > 5 ? `↑ rising +${changePct.toFixed(1)}%`
+                  : changePct < -5 ? `↓ falling ${changePct.toFixed(1)}%`
+                  : '→ stable';
+  return `${direction}${unit ? ` (recent avg: ${recent.toFixed(1)}${unit})` : ''}`;
+}
 
 // --- Record Types -------------------------------------------------------------
 
 /** Category 1 — Environmental & Geospatial Data (Base Environment) */
-interface EnvGeoRecord {
+export interface EnvGeoRecord {
   date?: string;
-  // GPS / polygon boundaries
   latitude?: string;             gps_lat?: string;
   longitude?: string;            gps_lng?: string;
   polygon_boundary?: string;
-  // Soil test report
   soil_ph?: string;              ph?: string;
   soil_npk_nitrogen?: string;    nitrogen_ppm?: string;   nitrogen?: string;
   soil_npk_phosphorus?: string;  phosphorus_ppm?: string; phosphorus?: string;
   soil_npk_potassium?: string;   potassium_ppm?: string;  potassium?: string;
   organic_matter_pct?: string;   organic_matter?: string;
-  soil_type?: string;            // e.g. "peat", "red soil", "alluvial"
-  // Water source status (aquaculture)
-  water_type?: string;           // e.g. "river", "borehole", "rain-fed"
+  soil_type?: string;
+  water_type?: string;
   water_temp_c?: string;         water_temperature?: string;
   dissolved_oxygen?: string;
   ammonia_nitrogen?: string;
-  // Generic catch-all
   [key: string]: string | undefined;
 }
 
 /** Category 2 — Biological & Crop Data (Growth Cycle & Features) */
-interface BioCropRecord {
+export interface BioCropRecord {
   date?: string;
-  // Variety / strain identity
   crop_variety?: string;         variety?: string;   strain?: string;
-  // Farming milestones
   sowing_date?: string;          planting_date?: string;
   expected_harvest_date?: string; harvest_date?: string;
-  // Field image metadata (populated by mock OCR/CV layer below)
   image_filename?: string;
-  image_label?: string;          // e.g. "leaf_yellowing", "fruit_grade_a"
-  image_confidence?: string;     // CV confidence score 0-100
+  image_label?: string;
+  image_confidence?: string;
   [key: string]: string | undefined;
 }
 
 /** Category 3 — Farming Operations Data (Management Records) */
-interface OperationsRecord {
+export interface OperationsRecord {
   date?: string;
-  // Input usage logs
   input_type?: string;           type?: string;
   input_amount?: string;         amount?: string;
-  input_unit?: string;           unit?: string;           // kg, L, etc.
-  // Irrigation records
+  input_unit?: string;           unit?: string;
   irrigation_time?: string;
   irrigation_volume_l?: string;  irrigation_volume?: string;
-  // Special events
   event_type?: string;           event?: string;
   event_description?: string;    description?: string;
   [key: string]: string | undefined;
 }
 
 /** Category 4 — Financial & Commercial Data (Yield & Business) */
-interface FinancialRecord {
+export interface FinancialRecord {
   date?: string;
-  // Historical yield data
   harvest_weight_kg?: string;    yield_kg?: string;
   grade_a_pct?: string;          grade_a?: string;
   grade_b_pct?: string;          grade_b?: string;
-  // Cost & expense breakdown
   seed_cost?: string;
   fertilizer_cost?: string;      fert_cost?: string;
   labor_cost?: string;
   equipment_cost?: string;       maintenance_cost?: string;
-  // Market sales prices
   market_price_per_kg?: string;  price_per_kg?: string;   price?: string;
   channel?: string;              market?: string;
   volume_kg?: string;            volume?: string;
@@ -90,7 +83,7 @@ interface FinancialRecord {
 
 // --- The exact shape the frontend expects ------------------------------------
 
-interface AnalysisResult {
+export interface AnalysisResult {
   bioFertReduction: number;
   bioIrrigation: number;
   inputs: { fert: number; labor: number };
@@ -142,7 +135,7 @@ interface AnalysisResult {
 
 // --- CSV / JSON Parsers -------------------------------------------------------
 
-function parseCSV(text: string): Record<string, string>[] {
+export function parseCSV(text: string): Record<string, string>[] {
   const lines = text.trim().split(/\r?\n/);
   if (lines.length < 2) return [];
   const headers = lines[0].split(',').map(h => h.trim().replace(/^["']|["']$/g, ''));
@@ -156,76 +149,13 @@ function parseCSV(text: string): Record<string, string>[] {
     });
 }
 
-function tryParseJSON(text: string): unknown {
+export function tryParseJSON(text: string): unknown {
   try { return JSON.parse(text); } catch { return null; }
-}
-
-async function readFile(file: File): Promise<Record<string, string>[]> {
-  const text = await file.text();
-  if (file.name.endsWith('.json')) {
-    const data = tryParseJSON(text);
-    if (Array.isArray(data)) return data as Record<string, string>[];
-    if (data && typeof data === 'object') return [data as Record<string, string>];
-    return [];
-  }
-  return parseCSV(text);
-}
-
-/**
- * Extended file reader that handles images for Categories 1 & 2.
- * When an image is uploaded, a mock OCR/CV payload is returned.
- *
- * TODO: Replace the mock block below with a real OCR/CV pipeline, e.g.:
- *   - OCR (soil reports): Tesseract.js, AWS Textract, or Google Vision Document AI
- *   - Computer Vision (leaf/fruit photos): a custom PyTorch model endpoint,
- *     Azure Custom Vision, or Google AutoML Vision
- */
-async function readFileOrImage(file: File): Promise<Record<string, string>[]> {
-  const imageExts = ['.jpg', '.jpeg', '.png', '.webp', '.heic'];
-  const isImage = imageExts.some(ext => file.name.toLowerCase().endsWith(ext));
-
-  if (isImage) {
-    // ── MOCK OCR / CV EXTRACTION ──────────────────────────────────────────────
-    // Real implementation: send `file` to OCR/CV service, parse structured fields.
-    // For now, log the event and return a minimal placeholder record so the LLM
-    // is aware an image was submitted but no text data could be extracted yet.
-    console.log(`[BioFin] Image file detected: "${file.name}" — OCR/CV pipeline not yet active. Returning mock payload.`);
-    return [{
-      _source:     'image_ocr_cv_mock',
-      _filename:   file.name,
-      image_label: 'awaiting_cv_integration',
-      image_confidence: '0',
-      _note: `Image uploaded (${(file.size / 1024).toFixed(1)} KB). OCR/CV integration pending — see readFileOrImage() in route.ts.`,
-    }];
-    // ── END MOCK ──────────────────────────────────────────────────────────────
-  }
-
-  return readFile(file);
-}
-
-// --- Numeric helpers (used for pre-processing & fallback) --------------------
-
-const num   = (v: string | undefined, fb = 0) => { const n = parseFloat(v ?? ''); return isFinite(n) ? n : fb; };
-const avg   = (a: number[]) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
-const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-
-// Computes a human-readable trend description for the LLM.
-function trendLabel(series: number[], unit = ''): string {
-  if (series.length < 2) return 'stable (single record)';
-  const overall   = avg(series);
-  const recentN   = Math.min(3, series.length);
-  const recent    = avg(series.slice(-recentN));
-  if (overall === 0) return 'stable';
-  const changePct = ((recent - overall) / Math.abs(overall)) * 100;
-  const direction = changePct > 5 ? `↑ rising +${changePct.toFixed(1)}%`
-                  : changePct < -5 ? `↓ falling ${changePct.toFixed(1)}%`
-                  : '→ stable';
-  return `${direction}${unit ? ` (recent avg: ${recent.toFixed(1)}${unit})` : ''}`;
 }
 
 // --- Lightweight pre-aggregation (for prompt context) ------------------------
 
-function summariseEnvGeo(rows: EnvGeoRecord[]) {
+export function summariseEnvGeo(rows: EnvGeoRecord[]) {
   if (!rows.length) return null;
   const phSeries = rows.map(r => num(r.soil_ph ?? r.ph, 6.5));
   const nSeries  = rows.map(r => num(r.soil_npk_nitrogen ?? r.nitrogen_ppm ?? r.nitrogen, 42));
@@ -249,19 +179,16 @@ function summariseEnvGeo(rows: EnvGeoRecord[]) {
     gpsProvided:       rows.some(r => r.latitude ?? r.gps_lat),
     recordCount:       rows.length,
     sampleDates:       rows.slice(0, 3).map(r => r.date).filter(Boolean),
-    // Trend signals — last 3 vs overall mean
     nitrogenTrend:     trendLabel(nSeries, 'ppm'),
     recentPhReadings:  phSeries.slice(-3),
   };
 }
 
-function summariseBioCrop(rows: BioCropRecord[]) {
+export function summariseBioCrop(rows: BioCropRecord[]) {
   if (!rows.length) return null;
-  // Resolve variety — check multiple alias keys
   const varietyRow = rows.find(r => r.crop_variety ?? r.variety ?? r.strain);
   const cropVariety = varietyRow?.crop_variety ?? varietyRow?.variety ?? varietyRow?.strain ?? 'Musang King (D197)';
 
-  // Milestone dates — take first non-null found
   const sowingDate         = rows.find(r => r.sowing_date ?? r.planting_date)?.sowing_date
                              ?? rows.find(r => r.planting_date)?.planting_date
                              ?? null;
@@ -269,7 +196,6 @@ function summariseBioCrop(rows: BioCropRecord[]) {
                              ?? rows.find(r => r.harvest_date)?.harvest_date
                              ?? null;
 
-  // CV image metadata — aggregate any image records
   const imageRecords = rows.filter(r => r.image_filename);
   const imageLabels  = [...new Set(imageRecords.map(r => r.image_label).filter(Boolean))];
   const avgCVConfidence = imageRecords.length
@@ -287,7 +213,7 @@ function summariseBioCrop(rows: BioCropRecord[]) {
   };
 }
 
-function summariseOperations(rows: OperationsRecord[]) {
+export function summariseOperations(rows: OperationsRecord[]) {
   if (!rows.length) return null;
 
   const inputRows = rows.filter(r => r.input_type ?? r.type);
@@ -308,7 +234,6 @@ function summariseOperations(rows: OperationsRecord[]) {
     unit:   r.input_unit  ?? r.unit  ?? '',
   }));
 
-  // Detect special events (extreme weather, equipment failure, pruning)
   const specialEventTypes = eventRows.map(r => r.event_type ?? r.event ?? '').filter(Boolean);
 
   return {
@@ -326,7 +251,7 @@ function summariseOperations(rows: OperationsRecord[]) {
   };
 }
 
-function summariseFinancial(rows: FinancialRecord[]) {
+export function summariseFinancial(rows: FinancialRecord[]) {
   if (!rows.length) return null;
 
   const prices   = rows.map(r => num(r.market_price_per_kg ?? r.price_per_kg ?? r.price, 55)).filter(p => p > 0);
@@ -362,11 +287,8 @@ function summariseFinancial(rows: FinancialRecord[]) {
 }
 
 // --- Financial Risk Analysis --------------------------------------------------
-// Deterministically computes unsalable risk flags from raw financial rows.
-// Runs server-side so the frontend always gets structured data regardless
-// of whether the LLM call succeeds.
 
-function analyzeFinancialData(rows: FinancialRecord[]): {
+export function analyzeFinancialData(rows: FinancialRecord[]): {
   unsalableRisk: boolean;
   alternativeStrategy: string | null;
 } {
@@ -396,231 +318,31 @@ function analyzeFinancialData(rows: FinancialRecord[]): {
   return { unsalableRisk, alternativeStrategy };
 }
 
-// --- Tavily Web Search --------------------------------------------------------
-
-interface TavilyResult {
-  title: string;
-  url:   string;
-  content: string;
-}
-
-async function tavilySearch(query: string, maxResults = 4): Promise<TavilyResult[]> {
-  try {
-    const res = await fetch(TAVILY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        api_key:        TAVILY_KEY,
-        query,
-        search_depth:   'basic',
-        max_results:    maxResults,
-        include_answer: false,
-      }),
-    });
-    if (!res.ok) return [];
-    const data = await res.json() as any;
-    const results = (data.results ?? []) as any[];
-    return results.map((r: any) => ({
-      title:   r.title   ?? '',
-      url:     r.url     ?? '',
-      content: r.content ?? '',
-    }));
-  } catch {
-    return [];
-  }
-}
-
-// Decide which Tavily queries to run based on financial & operations signals
-async function fetchMarketIntelligence(
-  financial:  ReturnType<typeof summariseFinancial>,
-  operations: ReturnType<typeof summariseOperations>
-): Promise<{ query: string; results: TavilyResult[] }[]> {
-  const searches: { query: string; results: TavilyResult[] }[] = [];
-
-  if (!financial) return searches;
-
-  // Signal 1: Price dropping or high volatility → export channel search
-  if (financial.priceVolatilityPct > 20 || financial.avgPricePerKg < 45) {
-    searches.push({
-      query:   'latest durian export prices Singapore Hong Kong 2025 2026 Musang King',
-      results: await tavilySearch('latest durian export prices Singapore Hong Kong 2025 2026 Musang King'),
-    });
-  }
-
-  // Signal 2: Any price data → check Thai supply competition
-  searches.push({
-    query:   'Thailand durian supply export volume 2025 2026 market competition Malaysia',
-    results: await tavilySearch('Thailand durian supply export volume 2025 2026 market competition Malaysia'),
-  });
-
-  // Signal 3: Oversupply (high volume, low price) → by-product / alternative channel
-  const oversupply = financial.avgVolumeKg > 500 && financial.avgPricePerKg < 50;
-  if (oversupply || financial.priceVolatilityPct > 30) {
-    searches.push({
-      query:   'durian by-product processing dessert companies Malaysia unsold crop alternative sales channels',
-      results: await tavilySearch('durian by-product processing dessert companies Malaysia unsold crop alternative sales channels'),
-    });
-  }
-
-  // Signal 4: Special events logged in operations (extreme weather / equipment failure)
-  if (operations && operations.specialEventCount > 0) {
-    searches.push({
-      query:   'Malaysia agricultural crop insurance weather protection durian farm 2025',
-      results: await tavilySearch('Malaysia agricultural crop insurance weather protection durian farm 2025'),
-    });
-  }
-
-  return searches;
-}
-// --- Format market intel for prompt injection ---------------------------------
-
-function formatMarketIntel(intel: { query: string; results: TavilyResult[] }[]): string {
-  if (!intel.length || intel.every(i => !i.results.length)) {
-    return 'No live market data retrieved.';
-  }
-  return intel
-    .filter(i => i.results.length)
-    .map(i => {
-      const snippets = i.results
-        .slice(0, 3)
-        .map(r => `  - [${r.title}] ${r.content.slice(0, 280)}`)
-        .join('\n');
-      return `Search: "${i.query}"\n${snippets}`;
-    })
-    .join('\n\n');
-}
-
-// --- Default safe values (used as fallback if ZAI fails) ---------------------
-
-function buildDefaultResult(
-  envGeoRows:    Record<string, string>[],
-  bioCropRows:   Record<string, string>[],
-  operationsRows: Record<string, string>[],
-  financialRows: Record<string, string>[],
-  filesUploaded: number
-): AnalysisResult {
-  const { unsalableRisk, alternativeStrategy } = analyzeFinancialData(financialRows as FinancialRecord[]);
-
-  return {
-    bioFertReduction: 0,
-    bioIrrigation:    4,
-    inputs:           { fert: 400, labor: 120 },
-    loanRate:         5,
-    plantHealth: {
-      bioHealthIndex: 72,
-      gradeARatio:    68,
-      gradeBRatio:    22,
-      expectedLifespan: 14,
-      soilPH:         6.5,
-      soilMoisture:   82,
-      npk: {
-        nitrogen:   { ppm: 42,  pct: 72 },
-        phosphorus: { ppm: 18,  pct: 56 },
-        potassium:  { ppm: 120, pct: 88 },
-      },
-    },
-    environment: {
-      avgTemp: 30, avgHumidity: 82, solarRadiation: 750,
-      windSpeed: 22, pressure: 1008, co2: 412,
-    },
-    weatherRisk: null,
-    weatherDetails: {
-      avgRainfall: 12, avgTempMax: 32, maxWindSpeed: 22,
-      forecast: [
-        { day: 'Today', emoji: '☀️', temp: '32C', alert: false },
-        { day: 'Tue',   emoji: '🌤️', temp: '31C', alert: false },
-        { day: 'Wed',   emoji: '☀️', temp: '30C', alert: false },
-        { day: 'Thu',   emoji: '⛈️', temp: '29C', alert: true  },
-        { day: 'Fri',   emoji: '⛈️', temp: '28C', alert: true  },
-        { day: 'Sat',   emoji: '☀️', temp: '27C', alert: false },
-        { day: 'Sun',   emoji: '☀️', temp: '26C', alert: false },
-      ],
-    },
-    financial: {
-      expectedProfit: 18500, cashRunway: 142,
-      fertCost: 4800, laborCost: 1800, weatherLoss: 0,
-      suggestedLoanRate: 5, pricePerKg: 55, baseRevenue: 35000,
-    },
-    salesInsights: {
-      avgPricePerKg: 55, avgVolumeKg: 0,
-      priceVolatilityPct: 0, minPrice: 55, maxPrice: 55,
-      dominantChannel: 'Local Market',
-      hasData: financialRows.length > 0,
-      unsalableRisk,
-      alternativeStrategy,
-    },
-    compliance: [
-      { label: 'Invoice XML Format',             status: 'error', detail: 'Missing <TaxTotal> node - run LHDN audit to fix' },
-      { label: 'MyInvois Digital Signature',     status: 'ok',    detail: 'Certificate valid until 2027-03' },
-      { label: 'Supplier TIN Verification',      status: 'error', detail: '3 supplier TINs unverified' },
-      { label: 'SST Tax Rate Accuracy',          status: 'ok',    detail: 'All compliant with 6% standard rate' },
-      { label: 'Compliance Submission Deadline', status: 'warn',  detail: '18 days until Q2 deadline' },
-      { label: 'e-Invoicing Version',            status: 'ok',    detail: 'Upgraded to MyInvois 2.1' },
-    ],
-    recommendation: 'Analysis engine initialised with default parameters. Upload farm data files for a personalised AI-driven recommendation.',
-    marketNews: [],
-    summary: {
-      // Map new categories to legacy summary field names for frontend compatibility:
-      // envGeo → envRecords, bioCrop → plantGrowthRecords,
-      // operations → weatherRecords, financial → salesRecords
-      totalDataPoints:    envGeoRows.length + bioCropRows.length + operationsRows.length + financialRows.length,
-      plantGrowthRecords: bioCropRows.length,
-      envRecords:         envGeoRows.length,
-      weatherRecords:     operationsRows.length,
-      salesRecords:       financialRows.length,
-      overallHealthScore: 72,
-      riskLevel:          'MEDIUM',
-      filesUploaded,
-    },
-  };
-}
-
 // --- Strip markdown fences from LLM output -----------------------------------
 
-/**
- * Robustly extracts and repairs a JSON object from raw LLM output.
- * Handles the full range of common model mistakes:
- *   - Markdown fences (```json ... ```)
- *   - Prose before/after the JSON object
- *   - Trailing commas before } or ]
- *   - Single-quoted strings and property names
- *   - Python literals: None → null, True → true, False → false
- *   - Smart / curly quotes: " " ' '
- *   - JS-style // line comments inside JSON
- *   - Unescaped literal newlines inside string values
- *   - Truncated output — auto-closes unclosed brackets/braces
- */
-function repairLLMJson(raw: string): string {
+export function repairLLMJson(raw: string): string {
   let t = raw;
 
-  // Step 1: strip all markdown code fences
   t = t.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '');
 
-  // Step 2: isolate outermost { … }
   const s = t.indexOf('{');
   const e = t.lastIndexOf('}');
   if (s !== -1 && e > s) t = t.slice(s, e + 1);
-  else if (s !== -1)      t = t.slice(s);   // truncated — no closing brace yet
+  else if (s !== -1)      t = t.slice(s);
 
-  // Step 3: replace smart / curly quotes with straight quotes
   t = t
-    .replace(/[\u201C\u201D]/g, '"')   // " "
-    .replace(/[\u2018\u2019]/g, "'");  // ' '
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'");
 
-  // Step 4: Python literals
   t = t
     .replace(/:\s*None\b/g,  ': null')
     .replace(/:\s*True\b/g,  ': true')
     .replace(/:\s*False\b/g, ': false');
 
-  // Step 5: remove JS // comments
   t = t.replace(/\/\/[^\n\r]*/g, '');
 
-  // Step 6: trailing commas before } or ]  (run 4× for deep nesting)
   for (let i = 0; i < 4; i++) t = t.replace(/,\s*([}\]])/g, '$1');
 
-  // Step 7: unescaped literal newlines / tabs inside string values
-  // Replace raw CR/LF/tab that appear between two quote-delimited segments
   t = t.replace(/"([^"\\]*)"/g, (_match, inner: string) => {
     const fixed = inner
       .replace(/\n/g, '\\n')
@@ -629,7 +351,6 @@ function repairLLMJson(raw: string): string {
     return `"${fixed}"`;
   });
 
-  // Step 8: close any unclosed brackets / braces (truncated output)
   const stack: string[] = [];
   let inStr = false;
   let esc   = false;
@@ -642,18 +363,14 @@ function repairLLMJson(raw: string): string {
     else if (ch === '[')  stack.push(']');
     else if (ch === '}' || ch === ']') stack.pop();
   }
-  // Append missing closing tokens in reverse order
   t = t + stack.reverse().join('');
 
   return t.trim();
 }
 
-// Keep old name as alias so call-sites don't change
-const stripMarkdownJSON = repairLLMJson;
-
 // --- Validate and repair the LLM JSON before returning it --------------------
 
-function sanitiseResult(raw: any, defaults: AnalysisResult): AnalysisResult {
+export function sanitiseResult(raw: any, defaults: AnalysisResult): AnalysisResult {
   const d = defaults;
   const r = raw ?? {};
 
@@ -775,9 +492,91 @@ function sanitiseResult(raw: any, defaults: AnalysisResult): AnalysisResult {
   };
 }
 
+// --- Default safe values (used as fallback if ZAI fails) ---------------------
+
+export function buildDefaultResult(
+  envGeoRows:    Record<string, string>[],
+  bioCropRows:   Record<string, string>[],
+  operationsRows: Record<string, string>[],
+  financialRows: Record<string, string>[],
+  filesUploaded: number
+): AnalysisResult {
+  const { unsalableRisk, alternativeStrategy } = analyzeFinancialData(financialRows as FinancialRecord[]);
+
+  return {
+    bioFertReduction: 0,
+    bioIrrigation:    4,
+    inputs:           { fert: 400, labor: 120 },
+    loanRate:         5,
+    plantHealth: {
+      bioHealthIndex: 72,
+      gradeARatio:    68,
+      gradeBRatio:    22,
+      expectedLifespan: 14,
+      soilPH:         6.5,
+      soilMoisture:   82,
+      npk: {
+        nitrogen:   { ppm: 42,  pct: 72 },
+        phosphorus: { ppm: 18,  pct: 56 },
+        potassium:  { ppm: 120, pct: 88 },
+      },
+    },
+    environment: {
+      avgTemp: 30, avgHumidity: 82, solarRadiation: 750,
+      windSpeed: 22, pressure: 1008, co2: 412,
+    },
+    weatherRisk: null,
+    weatherDetails: {
+      avgRainfall: 12, avgTempMax: 32, maxWindSpeed: 22,
+      forecast: [
+        { day: 'Today', emoji: '☀️', temp: '32C', alert: false },
+        { day: 'Tue',   emoji: '🌤️', temp: '31C', alert: false },
+        { day: 'Wed',   emoji: '☀️', temp: '30C', alert: false },
+        { day: 'Thu',   emoji: '⛈️', temp: '29C', alert: true  },
+        { day: 'Fri',   emoji: '⛈️', temp: '28C', alert: true  },
+        { day: 'Sat',   emoji: '☀️', temp: '27C', alert: false },
+        { day: 'Sun',   emoji: '☀️', temp: '26C', alert: false },
+      ],
+    },
+    financial: {
+      expectedProfit: 18500, cashRunway: 142,
+      fertCost: 4800, laborCost: 1800, weatherLoss: 0,
+      suggestedLoanRate: 5, pricePerKg: 55, baseRevenue: 35000,
+    },
+    salesInsights: {
+      avgPricePerKg: 55, avgVolumeKg: 0,
+      priceVolatilityPct: 0, minPrice: 55, maxPrice: 55,
+      dominantChannel: 'Local Market',
+      hasData: financialRows.length > 0,
+      unsalableRisk,
+      alternativeStrategy,
+    },
+    compliance: [
+      { label: 'Invoice XML Format',             status: 'error', detail: 'Missing <TaxTotal> node - run LHDN audit to fix' },
+      { label: 'MyInvois Digital Signature',     status: 'ok',    detail: 'Certificate valid until 2027-03' },
+      { label: 'Supplier TIN Verification',      status: 'error', detail: '3 supplier TINs unverified' },
+      { label: 'SST Tax Rate Accuracy',          status: 'ok',    detail: 'All compliant with 6% standard rate' },
+      { label: 'Compliance Submission Deadline', status: 'warn',  detail: '18 days until Q2 deadline' },
+      { label: 'e-Invoicing Version',            status: 'ok',    detail: 'Upgraded to MyInvois 2.1' },
+    ],
+    recommendation: 'Analysis engine initialised with default parameters. Upload farm data files for a personalised AI-driven recommendation.',
+    marketNews: [],
+    summary: {
+      totalDataPoints:    envGeoRows.length + bioCropRows.length + operationsRows.length + financialRows.length,
+      plantGrowthRecords: bioCropRows.length,
+      envRecords:         envGeoRows.length,
+      weatherRecords:     operationsRows.length,
+      salesRecords:       financialRows.length,
+      overallHealthScore: 72,
+      riskLevel:          'MEDIUM',
+      filesUploaded,
+    },
+  };
+}
+
 // --- Build the ZAI prompt -----------------------------------------------------
 
-function buildSystemPrompt(): string {
+export function buildSystemPrompt(): string {
   return `You are BioFin Oracle AI - an expert agricultural intelligence engine specializing in Malaysian durian farming, financial analysis, and smart agriculture decision-making.
 
 You will receive structured farm data summaries and optional live market intelligence from web searches. Your job is to analyze this data deeply and return a SINGLE, complete JSON object.
@@ -821,15 +620,15 @@ FAILURE TO FOLLOW THIS RULE WILL BREAK THE SYSTEM. Output { immediately.
 
 The JSON must exactly match this TypeScript interface:
 {
-  "bioFertReduction": number,          // 0-50
-  "bioIrrigation": number,             // 1-8
+  "bioFertReduction": number,
+  "bioIrrigation": number,
   "inputs": { "fert": number, "labor": number },
-  "loanRate": number,                  // 3-15
+  "loanRate": number,
   "plantHealth": {
-    "bioHealthIndex": number,          // 0-100
-    "gradeARatio": number,             // 0-100
-    "gradeBRatio": number,             // 0-100
-    "expectedLifespan": number,        // years, e.g. 14
+    "bioHealthIndex": number,
+    "gradeARatio": number,
+    "gradeBRatio": number,
+    "expectedLifespan": number,
     "soilPH": number,
     "soilMoisture": number,
     "npk": {
@@ -851,7 +650,7 @@ The JSON must exactly match this TypeScript interface:
       { "day": "Wed",   "emoji": "☀️", "temp": "30C", "alert": false },
       { "day": "Thu",   "emoji": "⛈️", "temp": "29C", "alert": true  },
       { "day": "Fri",   "emoji": "⛈️", "temp": "28C", "alert": true  },
-      { "day": "Sat",   "emoji": "☀️", "temp": "27C", "alert": false },
+      { "day": "Sat",   "emoji": "☀️", "temp": "27C", alert: false },
       { "day": "Sun",   "emoji": "☀️", "temp": "26C", "alert": false }
     ]
   },
@@ -885,7 +684,7 @@ The JSON must exactly match this TypeScript interface:
 }`;
 }
 
-function buildUserPrompt(
+export function buildUserPrompt(
   envGeo:     ReturnType<typeof summariseEnvGeo>,
   bioCrop:    ReturnType<typeof summariseBioCrop>,
   operations: ReturnType<typeof summariseOperations>,
@@ -896,7 +695,6 @@ function buildUserPrompt(
   const sections: string[] = [];
   sections.push('## Uploaded Farm Data Summary\n');
 
-  // ── Category 1: Environmental & Geospatial ────────────────────────────────
   if (envGeo) {
     sections.push(`### 1. Environmental & Geospatial Data (${envGeo.recordCount} records)
 - GPS/Location provided: ${envGeo.gpsProvided ? 'Yes' : 'No'}
@@ -911,7 +709,6 @@ function buildUserPrompt(
     sections.push('### 1. Environmental & Geospatial Data: NOT UPLOADED — use intelligent defaults for Malaysian durian farm (soil pH 6.5, NPK N:42 P:18 K:120 ppm, peat soil)');
   }
 
-  // ── Category 2: Biological & Crop ────────────────────────────────────────
   if (bioCrop) {
     const cvSummary = bioCrop.imageRecordsCount > 0
       ? `Image records: ${bioCrop.imageRecordsCount} | CV Labels detected: ${bioCrop.detectedCVLabels.join(', ') || 'none'} | Avg CV confidence: ${bioCrop.avgCVConfidence ?? 'N/A'}%`
@@ -925,7 +722,6 @@ function buildUserPrompt(
     sections.push('\n### 2. Biological & Crop Data: NOT UPLOADED — use Musang King (D197) defaults, standard growth cycle');
   }
 
-  // ── Category 3: Farming Operations ───────────────────────────────────────
   if (operations) {
     sections.push(`\n### 3. Farming Operations Data (${operations.recordCount} records)
 - Total Input Events: ${operations.totalInputEvents} | Fertilizer: ${operations.totalFertilizerEvents} | Pesticide/Herbicide: ${operations.totalPesticideEvents} | Aquaculture Feed: ${operations.totalFeedEvents}
@@ -937,7 +733,6 @@ function buildUserPrompt(
     sections.push('\n### 3. Farming Operations Data: NOT UPLOADED — infer fertilizer/irrigation activity from defaults');
   }
 
-  // ── Category 4: Financial & Commercial ───────────────────────────────────
   if (financial) {
     sections.push(`\n### 4. Financial & Commercial Data (${financial.recordCount} records)
 - Market Price: avg RM ${financial.avgPricePerKg}/kg | Min: RM ${financial.minPrice} | Max: RM ${financial.maxPrice} | Trend: ${financial.priceTrend}
@@ -963,230 +758,4 @@ ${intel}`);
 Now perform your complete analysis and output the JSON object ONLY. No text before or after.`);
 
   return sections.join('\n');
-}
-
-// --- Call ZAI (ilmu.ai) API ---------------------------------------------------
-
-async function callZAI(systemPrompt: string, userPrompt: string): Promise<string> {
-  const MAX_RETRIES = 2;
-  const REQUEST_TIMEOUT_MS = 90_000;
-
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    try {
-      const res = await fetch(ZAI_BASE_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${ZAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: ZAI_MODEL,
-          temperature: 0.2,
-          max_tokens: 4096,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user',   content: userPrompt   },
-          ],
-        }),
-        signal: controller.signal,
-      });
-
-      const responseText = await res.text();
-
-      if (!res.ok) {
-        throw new Error(`ZAI API error ${res.status}: ${responseText.slice(0, 300)}`);
-      }
-
-      const data = JSON.parse(responseText) as any;
-
-      const finishReason = data?.choices?.[0]?.finish_reason;
-      console.log(`[BioFin] ZAI finish_reason: ${finishReason} (attempt ${attempt})`);
-
-      if (finishReason === 'length') {
-        console.warn('[BioFin] Response was truncated — max_tokens too low or prompt too long');
-      }
-
-      const content = data?.choices?.[0]?.message?.content;
-
-      if (typeof content !== 'string' || !content.trim()) {
-        console.warn('[BioFin] Full raw response:', JSON.stringify(data));
-        throw new Error(`ZAI returned empty content (model: ${ZAI_MODEL}, attempt: ${attempt})`);
-      }
-
-      return content;
-
-    } catch (err) {
-      clearTimeout(timeout);
-      const isAbort = err instanceof DOMException && err.name === 'AbortError';
-      const label = isAbort ? `timed out after ${REQUEST_TIMEOUT_MS / 1000}s` : String(err);
-      console.warn(`[BioFin] ZAI attempt ${attempt}/${MAX_RETRIES} ${isAbort ? 'timed out' : 'failed'}:`, label);
-      if (attempt === MAX_RETRIES) throw err;
-      await new Promise(r => setTimeout(r, 1000 * attempt));
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  throw new Error('ZAI API exhausted all retries');
-}
-
-// --- POST Handler -------------------------------------------------------------
-
-export async function POST(request: NextRequest) {
-  let filesUploaded = 0;
-
-  // -- 1. Parse uploaded files -----------------------------------------------
-  let envGeoRows:    Record<string, string>[] = [];
-  let bioCropRows:   Record<string, string>[] = [];
-  let operationsRows: Record<string, string>[] = [];
-  let financialRows: Record<string, string>[] = [];
-
-  try {
-    const formData = await request.formData();
-
-    // getAll() returns an array — supports multiple files per category
-    const envGeoFileArr    = formData.getAll('envGeoData')      as File[];
-    const bioCropFileArr   = formData.getAll('bioCropData')     as File[];
-    const operationsFileArr = formData.getAll('operationsData') as File[];
-    const financialFileArr  = formData.getAll('financialData')  as File[];
-
-    // Count categories that have at least one file
-    filesUploaded = [envGeoFileArr, bioCropFileArr, operationsFileArr, financialFileArr]
-      .filter(arr => arr.length > 0).length;
-
-    // Process all files per category and concatenate records
-    const readAllFiles = async (files: File[], imageOk: boolean): Promise<Record<string, string>[]> => {
-      const results = await Promise.all(
-        files.map(f => imageOk ? readFileOrImage(f) : readFile(f))
-      );
-      return results.flat();
-    };
-
-    [envGeoRows, bioCropRows, operationsRows, financialRows] = await Promise.all([
-      envGeoFileArr.length    ? readAllFiles(envGeoFileArr,    true)  : Promise.resolve([]),
-      bioCropFileArr.length   ? readAllFiles(bioCropFileArr,   true)  : Promise.resolve([]),
-      operationsFileArr.length ? readAllFiles(operationsFileArr, false) : Promise.resolve([]),
-      financialFileArr.length  ? readAllFiles(financialFileArr,  false) : Promise.resolve([]),
-    ]);
-  } catch (parseErr) {
-    console.error('[BioFin] File parse error:', parseErr);
-    // Non-fatal: continue with empty arrays and let AI use defaults
-  }
-
-  const defaults = buildDefaultResult(envGeoRows, bioCropRows, operationsRows, financialRows, filesUploaded);
-
-  // -- 2. Summarise data into compact stats ----------------------------------
-  const envGeo    = summariseEnvGeo(envGeoRows       as EnvGeoRecord[]);
-  const bioCrop   = summariseBioCrop(bioCropRows     as BioCropRecord[]);
-  const operations = summariseOperations(operationsRows as OperationsRecord[]);
-  const financial  = summariseFinancial(financialRows  as FinancialRecord[]);
-
-  // -- 3. Live market intelligence (Tavily) ----------------------------------
-  let intelText  = 'No live market data retrieved (no financial data uploaded).';
-  let marketNews: AnalysisResult['marketNews'] = [];
-  try {
-    const intel = await fetchMarketIntelligence(financial, operations);
-    intelText   = formatMarketIntel(intel);
-    marketNews  = intel.flatMap(i =>
-      i.results.map(r => ({
-        query:   i.query,
-        title:   r.title,
-        snippet: r.content.slice(0, 280),
-        url:     r.url,
-      }))
-    );
-  } catch (tavilyErr) {
-    console.error('[BioFin] Tavily error:', tavilyErr);
-    intelText = 'Live market search unavailable - proceeding with local analysis only.';
-  }
-
-  // -- 4. Call ZAI --------------------------------------------------------
-  try {
-    const systemPrompt = buildSystemPrompt();
-    const userPrompt   = buildUserPrompt(envGeo, bioCrop, operations, financial, intelText, {
-      envGeo:     envGeoRows.length,
-      bioCrop:    bioCropRows.length,
-      operations: operationsRows.length,
-      financial:  financialRows.length,
-      files:      filesUploaded,
-    });
-
-    const rawLLMOutput = await callZAI(systemPrompt, userPrompt);
-    const cleanedJSON  = stripMarkdownJSON(rawLLMOutput);
-
-    let parsed: any;
-    try {
-      parsed = JSON.parse(cleanedJSON);
-    } catch (firstErr) {
-      // repairLLMJson already did heavy lifting; log raw output for debugging
-      console.error('[BioFin] JSON parse failed. Raw LLM output (first 600 chars):', rawLLMOutput.slice(0, 600));
-      console.error('[BioFin] Cleaned JSON (first 600 chars):', cleanedJSON.slice(0, 600));
-      throw new Error(`JSON parse error: ${(firstErr as Error).message}`);
-    }
-
-    const result = sanitiseResult(parsed, defaults);
-    return NextResponse.json({ ...result, marketNews });
-
-  } catch (aiErr) {
-    // -- 5. Graceful AI fallback --------------------------------------------
-    console.error('[BioFin] AI pipeline error - returning safe defaults:', aiErr);
-
-    const enriched: AnalysisResult = {
-      ...defaults,
-      marketNews,
-      summary: {
-        ...defaults.summary,
-        riskLevel: 'MEDIUM',
-        filesUploaded,
-      },
-      recommendation: `AI analysis temporarily unavailable (${(aiErr as Error).message?.slice(0, 80)}). Dashboard showing safe baseline values. Re-run analysis to get full AI-powered insights.`,
-    };
-
-    return NextResponse.json(enriched, {
-      headers: { 'X-AI-Fallback': 'true' },
-    });
-  }
-}
-
-// --- GET - health check & API docs -------------------------------------------
-
-export async function GET() {
-  return NextResponse.json({
-    status:  'ok',
-    service: 'BioFin Oracle Analysis API - ZAI Edition',
-    version: '4.0.0',
-    pipeline: {
-      step1: 'Parse uploaded CSV/JSON/Image files (envGeo, bioCrop, operations, financial)',
-      step2: 'Summarise data into compact statistics for LLM context (images → mock OCR/CV payload)',
-      step3: 'Tavily live web search: market prices, competitors, by-product channels (triggered by financial/operations signals)',
-      step4: 'ZAI (ilmu-glm) API call: full AI analysis -> strict JSON output',
-      step5: 'Sanitise + validate JSON -> return AnalysisResult to frontend',
-      fallback: 'If ZAI fails, return safe default values with error note in recommendation',
-    },
-    models: {
-      llm:    `${ZAI_BASE_URL} (model: ${ZAI_MODEL})`,
-      search: TAVILY_URL,
-    },
-    endpoints: {
-      'POST /api/analyze': {
-        accepts: 'multipart/form-data',
-        fields: {
-          envGeoData: 'CSV/JSON/Image — Environmental & Geospatial: latitude, longitude, soil_ph, soil_npk_nitrogen, soil_npk_phosphorus, soil_npk_potassium, organic_matter_pct, soil_type, water_type, water_temp_c, dissolved_oxygen, ammonia_nitrogen',
-          bioCropData: 'CSV/JSON/Image — Biological & Crop: crop_variety, strain, sowing_date, expected_harvest_date, image_filename, image_label (CV)',
-          operationsData: 'CSV/JSON — Farming Operations: date, input_type, input_amount, input_unit, irrigation_time, irrigation_volume_l, event_type, event_description',
-          financialData: 'CSV/JSON — Financial & Commercial: date, harvest_weight_kg, grade_a_pct, grade_b_pct, seed_cost, fertilizer_cost, labor_cost, equipment_cost, market_price_per_kg, channel, volume_kg, revenue',
-        },
-        returns: 'AnalysisResult JSON - all fields computed by ZAI AI',
-        imageNote: 'Images (.jpg/.jpeg/.png) in envGeoData and bioCropData are accepted. OCR/CV integration is mocked — see readFileOrImage() in route.ts for the integration point.',
-      },
-    },
-    sampleCSV: {
-      envGeoData:    'date,latitude,longitude,soil_ph,soil_npk_nitrogen,soil_npk_phosphorus,soil_npk_potassium,organic_matter_pct,soil_type,water_type,water_temp_c,dissolved_oxygen,ammonia_nitrogen\n2024-04-01,3.1570,103.4542,6.5,42,18,120,8.4,peat,river,28.5,6.2,0.05',
-      bioCropData:   'date,crop_variety,strain,sowing_date,expected_harvest_date\n2024-04-01,Musang King,D197,2023-01-15,2024-07-30',
-      operationsData: 'date,input_type,input_amount,input_unit,irrigation_time,irrigation_volume_l,event_type,event_description\n2024-04-01,Fertilizer,25,kg,07:00,500,,\n2024-04-03,Pesticide,2,L,,,,\n2024-04-10,,,,06:30,480,Extreme Weather,Heavy rain 3 days',
-      financialData: 'date,harvest_weight_kg,grade_a_pct,grade_b_pct,fertilizer_cost,labor_cost,equipment_cost,market_price_per_kg,channel,volume_kg,revenue\n2024-03-15,1200,72,22,4800,1800,600,58,Singapore Export,320,18560',
-    },
-  });
 }

@@ -383,7 +383,21 @@ export default function BioFinOracle() {
       operationsFiles.forEach(f => fd.append('operationsData', f));
       financialFiles.forEach(f  => fd.append('financialData',  f));
 
-      const res  = await fetch('/api/analyze', { method: 'POST', body: fd });
+      const controller = new AbortController();
+      const fetchTimeout = setTimeout(() => controller.abort(), 150_000);
+      let res: Response;
+      try {
+        res = await fetch('/api/analyze', { method: 'POST', body: fd, signal: controller.signal });
+      } finally {
+        clearTimeout(fetchTimeout);
+      }
+
+      // Guard: if server returned HTML (timeout/error page), show a clear message
+      const contentType = res.headers.get('content-type') ?? '';
+      if (!contentType.includes('application/json')) {
+        throw new Error('Server returned a non-JSON response. The analysis service may be temporarily unavailable — please try again.');
+      }
+
       const data: AnalysisResult = await res.json();
 
       if (!res.ok) throw new Error((data as any).error || 'Server error');
@@ -396,7 +410,10 @@ export default function BioFinOracle() {
       if (data.weatherRisk) setWeatherEvent2(data.weatherRisk);
 
     } catch (err) {
-      setApiError(String(err));
+      const msg = err instanceof DOMException && err.name === 'AbortError'
+        ? 'Analysis request timed out. The AI service may be overloaded — please try again.'
+        : String(err);
+      setApiError(msg);
       setIsProcessing(false);
       return;
     }
@@ -1186,7 +1203,7 @@ export default function BioFinOracle() {
                           { month: 'Mar', h: 52 }, { month: '', h: 56 }, { month: '', h: 54 },
                           { month: 'Apr', h: 80, now: true },
                         ].map((b, i) => (
-                          <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end' }}>
+                          <div key={i} style={{ flex: 1, height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end' }}>
                             <div style={{ width: '100%', height: `${b.h}%`, background: (b as any).now ? '#059669' : '#a7f3d0', borderRadius: '4px 4px 0 0', transition: 'height 0.6s ease' }} />
                           </div>
                         ))}
