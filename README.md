@@ -1,81 +1,116 @@
-# BioFin Oracle (Z.AI Decision Brain) - Product Requirements Document
+**The Z.AI Decision Brain for Malaysian Agri-Fintech.** Moving SME orchard owners from weather-dependent gambles to data-driven operational management.
 
-**Document Version:** 1.0.0 (Release Candidate)
-**Project Status:** Development Phase (UM Hackathon 2026 Submission)
-**Target Audience:** Malaysian SME Orchard Owners (High-Value Agri-Sector)
-**Primary Technology:** Next.js, Django, X.AI API, PostgreSQL, Redis
+Built for **UM Hackathon 2026** — Domain 2: AI for Economic Empowerment & Decision Intelligence.
 
----
+## The Idea
+Malaysian high-value agriculture is paralyzed by the "Triple Volatility" crisis: biological waste, extreme meteorological shifts, and market information asymmetry. Existing tools provide passive dashboards that require manual interpretation—a fatal flaw when reacting to sudden environmental shifts.
 
-## 1. Project Overview
-The BioFin Oracle is a **Smart Agri-Fintech Decision Brain** designed to solve the "Triple Volatility" crisis faced by Malaysian SME farmers in the high-value agriculture sector (e.g., Musang King durian). The system transitions orchard owners from traditional, "experience-based" farming to data-driven executive management.
+**BioFin Oracle** operates as an active intelligence engine. It ingests unstructured market news and structured farm telemetry to generate explainable, quantifiable action plans. It outputs direct operational directives (e.g., altering harvest dates) rather than just visualizing data.
 
-By ingesting multi-dimensional data—ranging from structured soil NPK sensor readings to unstructured international trade news and weather APIs—the X.AI-powered GLM (Reasoning Engine) processes variables to generate deterministic, quantifiable action commands. It prevents capital waste and hedges against meteorological and market shocks.
+## How It Works
+* **Data Ingestion** — Users upload up to four static CSV/JSON datasets (Plant Growth, Environmental Variables, Weather Records, Sales History).
+* **Pre-Aggregation** — The Next.js backend mathematically compresses the raw arrays into statistical summaries and trend signals to prevent LLM context window collapse.
+* **AI Reasoning** — The aggregated payload is transmitted to the Z.AI GLM API (`nemo-super`), forcing a deterministic JSON response conforming to a strict TypeScript interface.
+* **Execution Ledger** — The React frontend renders the "Agentic Decision Ledger," displaying the explicit operational command alongside the AI's causal reasoning chain.
+* **Simulation** — Users manipulate frontend sliders (e.g., fertilizer load, labor hours) to instantly recalculate projected profit margins via client-side logic.
 
-## 2. Background & Objectives
+## Screens
 
-### 2.1 Business Context (The Triple Volatility Crisis)
-* **Biological Volatility:** Preventive over-fertilization wastes 15-20% of annual budgets. Missing nutrient windows causes up to 40% yield collapse.
-* **Meteorological Volatility:** The 2026 climate shift features rapid transitions between extreme rain and drought. Delayed harvesting before squall lines results in catastrophic capital loss.
-* **Market Volatility:** Competitor dumping (e.g., from Thailand) crashes prices. SMEs face decision paralysis on market timing.
-
-### 2.2 Objectives
-* Deliver explicit, explainable "Trade-off Decisions" rather than raw data dashboards.
-* Reduce operational fertilizer/pesticide waste by 20%.
-* Increase gross revenue margins by 15% via strategic market timing and logistics arbitrage.
-* Provide verifiable LHDN (MyInvois 2026) compliance and financial runway forecasting.
-
-## 3. System Functionalities
-
-### 3.1 Dual-Pipeline Data Ingestion
-The system must simultaneously process distinct data modalities to feed the intelligence engine.
-
-| Data Type | Sources | Ingestion Method |
-| :--- | :--- | :--- |
-| **Structured Data** | Soil NPK metrics, irrigation volume, daily temperature, CSV financial ledgers. | REST API Endpoints (Django DRF) / User CSV Uploads. |
-| **Unstructured Data** | Meteorological alerts, international trade reports, regional competitor supply changes. | Webhooks / Automated Search APIs routed through the LLM parser. |
-
-### 3.2 X.AI Decision Engine Integration (The Brain)
-The core intelligence relies on a strictly constrained Large Language Model (X.AI).
-* **Deterministic JSON Output:** The LLM must output responses matching a rigid JSON schema dictated by the backend to hydrate the Next.js frontend state.
-* **Agentic Ledger:** The reasoning process is divided into specialized evaluation nodes: Sensory Agent, Risk Agent, and Market Agent.
-* **Causal Explainability:** Every action command (e.g., "Advance harvest by 48 hours") must explicitly reference the data correlation that triggered it (e.g., ">85% soil moisture combined with a 90% storm probability").
-
-### 3.3 Interactive Simulation Modules (Digital Twin)
-Users can manipulate variables to forecast compounding effects on cash flow and yield:
-* **Bio-Cultivation Optimizer:** Simulates how reducing fertilizer inputs directly impacts the Grade A to Grade B yield ratio and plant lifespan.
-* **Weather & Insurance Risk:** Calculates Yield-at-Risk (YaR) against specific weather models (Category 10 wind, drought) and compares expected loss against existing insurance coverage gaps.
-* **Supply Chain Arbitrage:** Redistributes supply allocation (e.g., shifting exports from Singapore to Hong Kong) dynamically in response to inputted port lockdowns or competitor supply surges.
-
-### 3.4 Compliance & ROI Automation
-Integration of a Rule/Risk layer to guarantee SME operations do not violate local regulations.
-* **LHDN MyInvois 2026 Check:** Audits synthetic financial data for valid Digital Signatures, SST Tax Rate accuracy, and XML node formatting.
-* **ROI Estimator:** Calculates system payback periods based on inputted monthly labor costs and efficiency gains.
-
-## 4. User Stories & Use Cases
-
-> **Use Case 1: Mitigating Imminent Weather Risk**
-> *As a Farm CEO,* I want the system to cross-reference current high soil moisture with incoming storm data *so that* I can receive an explicit command to advance my harvest, rather than just seeing a weather alert, saving RM 22,000 in potential root rot losses.
-
-> **Use Case 2: Market Supply Shock Hedging**
-> *As a CFO,* I want to simulate a 15% surge in Thai durian supply hitting the market in 5 days *so that* the AI can recommend immediately locking in 40% of my Singapore pre-sale orders, maintaining my profit margin.
-
-> **Use Case 3: Cash Flow Stress Testing**
-> *As an Operations Manager,* I want to input an expected 14-day payment delay from buyers and a 10% labor cost increase *so that* the system accurately recalculates my survival runway and triggers a financing alert if insolvency drops below 60 days.
-
-## 5. Scope Definition (Hackathon Constraints)
-
-| In-Scope (Must Have for Pitch) | Out-of-Scope (Future Iterations) |
+| Screen | What it does |
 | :--- | :--- |
-| Django backend REST architecture with Celery task queues. | Direct hardware integration with physical IoT sensors. |
-| X.AI API integration enforcing strict JSON response schemas. | Automated API trading or autonomous execution of logistics contracts. |
-| Next.js interactive simulation dashboard (UI/UX). | Real-time production database deployment (using SQLite/Redis locally for demo). |
-| Demonstrable causal logic ledger resolving a specific crisis scenario. | Comprehensive multi-year historical data training pipeline. |
+| **Command Center** | Displays the Agentic Decision Ledger, immediate biological/soil health metrics, and a 7-day micro-climate forecast. |
+| **Simulation Sandbox** | Digital Twin interface. Sliders for input variables (Nitrogen, Labor) dynamically updating expected net profit graphs. |
+| **Global Operations** | Triggers manual stress tests (e.g., logistics disruption) and displays automated hedging strategies. |
+| **SME Compliance** | Audits uploaded data against LHDN e-invoicing Phase 3 rules and calculates system ROI. |
 
-## 6. Assumptions & Dependencies
+## Tech Stack
 
-⚠️ **Technical Bottleneck Warning:** The entirety of this project's viability depends on the X.AI API's ability to consistently return structured JSON. Failure to strictly prompt the LLM will result in UI hydration failures. The Django backend must employ rigorous validation and fallback mechanisms before piping LLM data to the Next.js client.
+| Layer | Technology |
+| :--- | :--- |
+| UI Framework | Next.js (React), Tailwind CSS |
+| Visualization | Chart.js |
+| API Routing | Next.js App Router (`app/api/analyze/route.ts`) |
+| AI Engine | Z.AI GLM API (`nemo-super`) |
+| Web Search | Tavily Search API |
 
-* **Latency:** LLM processing times for multi-variable correlation will require asynchronous handling (Celery) to prevent UI timeouts during the hackathon demo.
-* **Data Availability:** Given the fragmentation of Malaysian agricultural data, the hackathon prototype assumes the use of cleaned, synthetic CSV datasets acting as proxies for live data.gov.my or FAMA API feeds.
-* **Frameworks:** The frontend team is proficient in Next.js/React hooks, and the backend team can successfully bridge DRF with the X.AI endpoints.
+## AI Integration
+
+**Z.AI GLM API (Synchronous Inference):**
+* Context-aware reasoning of agricultural telemetry.
+* Generation of strict JSON decision matrices.
+* Translation of raw numbers into human-readable causal logic.
+
+**Heuristic Evaluation Engine (Local System Fallback):**
+* Hardcoded risk flags (e.g., max wind > 24km/h) that trigger a default functional dataset if the LLM times out or hallucinates an invalid schema.
+
+## Prerequisites
+* Node.js (v18+)
+* Z.AI GLM API Key
+* Tavily API Key
+
+## Setup
+
+```
+```text?code_stdout&code_event_index=2
+README-v3.md generated successfully.
+
+```bash
+# Clone the repo
+git clone [https://github.com/your-org/biofin-oracle.git](https://github.com/your-org/biofin-oracle.git)
+cd biofin-oracle/frontend
+
+# Install dependencies
+npm install
+
+# Add Environment variables (not checked in)
+# Create a .env.local file in the root:
+# GLM_API_KEY=your_zai_key_here
+# GLM_MODEL=nemo-super
+# TAVILY_API_KEY=your_tavily_key_here
+```
+
+## Running
+
+```bash
+# Run the development server
+npm run dev
+```
+
+## Project Structure
+
+```plaintext
+frontend/
+  app/
+    api/analyze/route.ts     # Core backend pipeline: file parsing, aggregation, LLM routing
+    page.tsx                 # Main dashboard UI entry point
+    layout.tsx               # Global application layout
+    globals.css              # Tailwind and global styles
+  public/                    # Static assets (SVGs)
+  package.json               # Dependencies and scripts
+  next.config.ts             # Next.js configuration
+```
+
+## System Constraints
+The system architecture dictates strict operational boundaries:
+* **Ephemeral State:** There is no database. All data is processed in-memory and destroyed post-request.
+* **Timeout Risk:** Vercel serverless functions cap execution time. Prolonged LLM inference chains will trigger a 504 error, routing the system to the Heuristic Fallback.
+* **Input Fragility:** The parsing engine relies entirely on the structural integrity of the uploaded CSV files.
+
+## What's Real vs Mocked
+
+**Real (AI-powered & Engineered)**
+* Next.js backend CSV parsing and arithmetic aggregation.
+* Z.AI GLM zero-shot inference generating structural JSON.
+* Client-side digital twin recalculations via Chart.js.
+* Real-time fallback interception for failed LLM calls.
+
+**Mocked (For Hackathon Scope)**
+* **No IoT Integration:** Sensor data is manually uploaded via CSV, not polled from live hardware.
+* **No Distributed Backend:** The system is a synchronous monolith. It does not utilize Django or Celery task queues.
+* **No Persistence:** Historical trend analysis across multiple sessions is impossible due to the lack of PostgreSQL or any persistent database storage.
+
+## Team
+* **Tan Liang Chuan:** Lead AI Orchestrator
+* **Thet Htun Oakar & Ng Yi Ren:** Backend Lead
+* **Tan Li Hong & Chen Bing Yan:** Frontend Lead
+
