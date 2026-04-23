@@ -1,5 +1,3 @@
-markdown_content = """# BioFin Oracle
-
 **The Z.AI Decision Brain for Malaysian Agri-Fintech.** Moving SME orchard owners from weather-dependent gambles to data-driven operational management.
 
 Built for **UM Hackathon 2026** — Domain 2: AI for Economic Empowerment & Decision Intelligence.
