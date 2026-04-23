@@ -1,62 +1,88 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 // --- API Config ---------------------------------------------------------------
-
-// --- API Config ---------------------------------------------------------------
 // Keys are loaded from environment variables — never hardcode secrets in source.
 // Create a .env.local file (gitignored) with the variables below.
 // See .env.local.example in the project root for the required variable names.
 
-const GLM_BASE_URL  = 'https://api.ilmu.ai/v1';
-const GLM_API_KEY   = process.env.GLM_API_KEY ?? '';
-const GLM_MODEL     = process.env.GLM_MODEL   ?? 'nemo-super';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? '';
+const GEMINI_MODEL   = process.env.GEMINI_MODEL   ?? 'gemini-1.5-flash';
 
 const TAVILY_URL    = 'https://api.tavily.com/search';
 const TAVILY_KEY    = process.env.TAVILY_API_KEY ?? '';
 
 // --- Record Types -------------------------------------------------------------
 
-interface PlantRecord {
+/** Category 1 — Environmental & Geospatial Data (Base Environment) */
+interface EnvGeoRecord {
   date?: string;
-  fertilizer_kg_ha?: string; fertilizer?: string;
-  irrigation_mm?: string;    irrigation?: string;
-  irrigation_frequency?: string;
-  labor_hours?: string;      labor?: string;
-  soil_ph?: string;          ph?: string;
-  soil_moisture?: string;    moisture?: string;
-  nitrogen_ppm?: string;     nitrogen?: string;
-  phosphorus_ppm?: string;   phosphorus?: string;
-  potassium_ppm?: string;    potassium?: string;
+  // GPS / polygon boundaries
+  latitude?: string;             gps_lat?: string;
+  longitude?: string;            gps_lng?: string;
+  polygon_boundary?: string;
+  // Soil test report
+  soil_ph?: string;              ph?: string;
+  soil_npk_nitrogen?: string;    nitrogen_ppm?: string;   nitrogen?: string;
+  soil_npk_phosphorus?: string;  phosphorus_ppm?: string; phosphorus?: string;
+  soil_npk_potassium?: string;   potassium_ppm?: string;  potassium?: string;
+  organic_matter_pct?: string;   organic_matter?: string;
+  soil_type?: string;            // e.g. "peat", "red soil", "alluvial"
+  // Water source status (aquaculture)
+  water_type?: string;           // e.g. "river", "borehole", "rain-fed"
+  water_temp_c?: string;         water_temperature?: string;
+  dissolved_oxygen?: string;
+  ammonia_nitrogen?: string;
+  // Generic catch-all
   [key: string]: string | undefined;
 }
 
-interface EnvRecord {
+/** Category 2 — Biological & Crop Data (Growth Cycle & Features) */
+interface BioCropRecord {
   date?: string;
-  temperature_c?: string;    temperature?: string;
-  humidity_pct?: string;     humidity?: string;
-  solar_radiation?: string;  solar?: string;
-  wind_speed?: string;       wind?: string;
-  co2_ppm?: string;          co2?: string;
-  barometric_pressure?: string; pressure?: string;
+  // Variety / strain identity
+  crop_variety?: string;         variety?: string;   strain?: string;
+  // Farming milestones
+  sowing_date?: string;          planting_date?: string;
+  expected_harvest_date?: string; harvest_date?: string;
+  // Field image metadata (populated by mock OCR/CV layer below)
+  image_filename?: string;
+  image_label?: string;          // e.g. "leaf_yellowing", "fruit_grade_a"
+  image_confidence?: string;     // CV confidence score 0-100
   [key: string]: string | undefined;
 }
 
-interface WeatherRecord {
+/** Category 3 — Farming Operations Data (Management Records) */
+interface OperationsRecord {
   date?: string;
-  rainfall_mm?: string;    rainfall?: string;
-  temp_max?: string;       temperature_max?: string;
-  temp_min?: string;       temperature_min?: string;
-  wind_speed_kmh?: string; wind_speed?: string;
-  storm_warning?: string;  storm?: string;
-  humidity?: string;
+  // Input usage logs
+  input_type?: string;           type?: string;
+  input_amount?: string;         amount?: string;
+  input_unit?: string;           unit?: string;           // kg, L, etc.
+  // Irrigation records
+  irrigation_time?: string;
+  irrigation_volume_l?: string;  irrigation_volume?: string;
+  // Special events
+  event_type?: string;           event?: string;
+  event_description?: string;    description?: string;
   [key: string]: string | undefined;
 }
 
-interface SalesRecord {
+/** Category 4 — Financial & Commercial Data (Yield & Business) */
+interface FinancialRecord {
   date?: string;
-  price_per_kg?: string; price?: string;
-  volume_kg?: string;    volume?: string;
-  channel?: string;      market?: string;
+  // Historical yield data
+  harvest_weight_kg?: string;    yield_kg?: string;
+  grade_a_pct?: string;          grade_a?: string;
+  grade_b_pct?: string;          grade_b?: string;
+  // Cost & expense breakdown
+  seed_cost?: string;
+  fertilizer_cost?: string;      fert_cost?: string;
+  labor_cost?: string;
+  equipment_cost?: string;       maintenance_cost?: string;
+  // Market sales prices
+  market_price_per_kg?: string;  price_per_kg?: string;   price?: string;
+  channel?: string;              market?: string;
+  volume_kg?: string;            volume?: string;
   revenue?: string;
   [key: string]: string | undefined;
 }
@@ -104,7 +130,6 @@ interface AnalysisResult {
   };
   compliance: { label: string; status: 'ok' | 'warn' | 'error'; detail: string }[];
   recommendation: string;
-  // Tavily live search results passed through so the frontend can render real news
   marketNews?: { query: string; title: string; snippet: string; url: string }[];
   summary: {
     totalDataPoints: number; plantGrowthRecords: number;
@@ -145,6 +170,38 @@ async function readFile(file: File): Promise<Record<string, string>[]> {
   return parseCSV(text);
 }
 
+/**
+ * Extended file reader that handles images for Categories 1 & 2.
+ * When an image is uploaded, a mock OCR/CV payload is returned.
+ *
+ * TODO: Replace the mock block below with a real OCR/CV pipeline, e.g.:
+ *   - OCR (soil reports): Tesseract.js, AWS Textract, or Google Vision Document AI
+ *   - Computer Vision (leaf/fruit photos): a custom PyTorch model endpoint,
+ *     Azure Custom Vision, or Google AutoML Vision
+ */
+async function readFileOrImage(file: File): Promise<Record<string, string>[]> {
+  const imageExts = ['.jpg', '.jpeg', '.png', '.webp', '.heic'];
+  const isImage = imageExts.some(ext => file.name.toLowerCase().endsWith(ext));
+
+  if (isImage) {
+    // ── MOCK OCR / CV EXTRACTION ──────────────────────────────────────────────
+    // Real implementation: send `file` to OCR/CV service, parse structured fields.
+    // For now, log the event and return a minimal placeholder record so the LLM
+    // is aware an image was submitted but no text data could be extracted yet.
+    console.log(`[BioFin] Image file detected: "${file.name}" — OCR/CV pipeline not yet active. Returning mock payload.`);
+    return [{
+      _source:     'image_ocr_cv_mock',
+      _filename:   file.name,
+      image_label: 'awaiting_cv_integration',
+      image_confidence: '0',
+      _note: `Image uploaded (${(file.size / 1024).toFixed(1)} KB). OCR/CV integration pending — see readFileOrImage() in route.ts.`,
+    }];
+    // ── END MOCK ──────────────────────────────────────────────────────────────
+  }
+
+  return readFile(file);
+}
+
 // --- Numeric helpers (used for pre-processing & fallback) --------------------
 
 const num   = (v: string | undefined, fb = 0) => { const n = parseFloat(v ?? ''); return isFinite(n) ? n : fb; };
@@ -152,8 +209,6 @@ const avg   = (a: number[]) => a.length ? a.reduce((x, y) => x + y, 0) / a.lengt
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 // Computes a human-readable trend description for the LLM.
-// Compares the average of the last 3 records against the overall average so
-// the model can see whether conditions are improving, stable or deteriorating.
 function trendLabel(series: number[], unit = ''): string {
   if (series.length < 2) return 'stable (single record)';
   const overall   = avg(series);
@@ -168,120 +223,156 @@ function trendLabel(series: number[], unit = ''): string {
 }
 
 // --- Lightweight pre-aggregation (for prompt context) ------------------------
-// Sends both flat averages AND recent-trend strings so the LLM can detect
-// sudden changes rather than being fooled by smooth historical averages.
 
-function summarisePlant(rows: PlantRecord[]) {
+function summariseEnvGeo(rows: EnvGeoRecord[]) {
   if (!rows.length) return null;
-  const moistureSeries = rows.map(r => num(r.soil_moisture ?? r.moisture, 82));
-  const fertSeries     = rows.map(r => num(r.fertilizer_kg_ha ?? r.fertilizer, 400));
-  const nSeries        = rows.map(r => num(r.nitrogen_ppm ?? r.nitrogen, 42));
+  const phSeries = rows.map(r => num(r.soil_ph ?? r.ph, 6.5));
+  const nSeries  = rows.map(r => num(r.soil_npk_nitrogen ?? r.nitrogen_ppm ?? r.nitrogen, 42));
+  const pSeries  = rows.map(r => num(r.soil_npk_phosphorus ?? r.phosphorus_ppm ?? r.phosphorus, 18));
+  const kSeries  = rows.map(r => num(r.soil_npk_potassium ?? r.potassium_ppm ?? r.potassium, 120));
+  const doSeries = rows.map(r => num(r.dissolved_oxygen, 0)).filter(v => v > 0);
+  const omSeries = rows.map(r => num(r.organic_matter_pct ?? r.organic_matter, 0)).filter(v => v > 0);
+
   return {
-    avgFertilizer:    +avg(fertSeries).toFixed(1),
-    avgIrrigationMm:  +avg(rows.map(r => num(r.irrigation_mm ?? r.irrigation, 20))).toFixed(1),
-    avgIrrigFreq:     +avg(rows.map(r => num(r.irrigation_frequency, 0))).toFixed(1),
-    avgLaborHours:    +avg(rows.map(r => num(r.labor_hours ?? r.labor, 120))).toFixed(1),
-    avgSoilPH:        +avg(rows.map(r => num(r.soil_ph ?? r.ph, 6.5))).toFixed(2),
-    avgSoilMoisture:  +avg(moistureSeries).toFixed(1),
-    avgNitrogenPPM:   +avg(nSeries).toFixed(1),
-    avgPhosphorusPPM: +avg(rows.map(r => num(r.phosphorus_ppm ?? r.phosphorus, 18))).toFixed(1),
-    avgPotassiumPPM:  +avg(rows.map(r => num(r.potassium_ppm ?? r.potassium, 120))).toFixed(1),
-    recordCount:      rows.length,
-    sampleDates:      rows.slice(0, 3).map(r => r.date).filter(Boolean),
-    // Trend signals — last 3 vs overall mean so LLM detects sudden changes
-    moistureTrend:    trendLabel(moistureSeries, '%'),
-    fertilizerTrend:  trendLabel(fertSeries, 'kg/ha'),
-    nitrogenTrend:    trendLabel(nSeries, 'ppm'),
-    // Last 3 raw soil-moisture readings for spike detection
-    recentMoisture:   moistureSeries.slice(-3),
+    avgSoilPH:         +avg(phSeries).toFixed(2),
+    latestSoilPH:      phSeries[phSeries.length - 1] ?? 6.5,
+    phTrend:           trendLabel(phSeries, ''),
+    avgNitrogenPPM:    +avg(nSeries).toFixed(1),
+    avgPhosphorusPPM:  +avg(pSeries).toFixed(1),
+    avgPotassiumPPM:   +avg(kSeries).toFixed(1),
+    avgOrganicMatterPct: omSeries.length ? +avg(omSeries).toFixed(1) : null,
+    soilType:          rows.find(r => r.soil_type)?.soil_type ?? 'Not specified',
+    waterType:         rows.find(r => r.water_type)?.water_type ?? 'Not specified',
+    avgDissolvedOxygen: doSeries.length ? +avg(doSeries).toFixed(1) : null,
+    avgAmmoniaNitrogen: +avg(rows.map(r => num(r.ammonia_nitrogen, 0))).toFixed(2),
+    gpsProvided:       rows.some(r => r.latitude ?? r.gps_lat),
+    recordCount:       rows.length,
+    sampleDates:       rows.slice(0, 3).map(r => r.date).filter(Boolean),
+    // Trend signals — last 3 vs overall mean
+    nitrogenTrend:     trendLabel(nSeries, 'ppm'),
+    recentPhReadings:  phSeries.slice(-3),
   };
 }
 
-function summariseEnv(rows: EnvRecord[]) {
+function summariseBioCrop(rows: BioCropRecord[]) {
   if (!rows.length) return null;
-  const tempSeries     = rows.map(r => num(r.temperature_c ?? r.temperature, 30));
-  const humiditySeries = rows.map(r => num(r.humidity_pct  ?? r.humidity,    82));
-  const co2Series      = rows.map(r => num(r.co2_ppm       ?? r.co2,         412));
+  // Resolve variety — check multiple alias keys
+  const varietyRow = rows.find(r => r.crop_variety ?? r.variety ?? r.strain);
+  const cropVariety = varietyRow?.crop_variety ?? varietyRow?.variety ?? varietyRow?.strain ?? 'Musang King (D197)';
+
+  // Milestone dates — take first non-null found
+  const sowingDate         = rows.find(r => r.sowing_date ?? r.planting_date)?.sowing_date
+                             ?? rows.find(r => r.planting_date)?.planting_date
+                             ?? null;
+  const expectedHarvestDate = rows.find(r => r.expected_harvest_date ?? r.harvest_date)?.expected_harvest_date
+                             ?? rows.find(r => r.harvest_date)?.harvest_date
+                             ?? null;
+
+  // CV image metadata — aggregate any image records
+  const imageRecords = rows.filter(r => r.image_filename);
+  const imageLabels  = [...new Set(imageRecords.map(r => r.image_label).filter(Boolean))];
+  const avgCVConfidence = imageRecords.length
+    ? +avg(imageRecords.map(r => num(r.image_confidence, 0))).toFixed(0)
+    : null;
+
   return {
-    avgTempC:    +avg(tempSeries).toFixed(1),
-    avgHumidity: +avg(humiditySeries).toFixed(1),
-    avgSolar:    +avg(rows.map(r => num(r.solar_radiation ?? r.solar, 750))).toFixed(0),
-    avgWind:     +avg(rows.map(r => num(r.wind_speed ?? r.wind, 22))).toFixed(1),
-    avgPressure: +avg(rows.map(r => num(r.barometric_pressure ?? r.pressure, 1008))).toFixed(0),
-    avgCO2:      +avg(co2Series).toFixed(0),
+    cropVariety,
+    sowingDate,
+    expectedHarvestDate,
+    imageRecordsCount:  imageRecords.length,
+    detectedCVLabels:   imageLabels,
+    avgCVConfidence,
     recordCount: rows.length,
-    // Trend signals
-    tempTrend:     trendLabel(tempSeries, '°C'),
-    humidityTrend: trendLabel(humiditySeries, '%'),
-    co2Trend:      trendLabel(co2Series, 'ppm'),
-    recentTemps:   tempSeries.slice(-3),
   };
 }
 
-function summariseWeather(rows: WeatherRecord[]) {
+function summariseOperations(rows: OperationsRecord[]) {
   if (!rows.length) return null;
-  const rainfall = rows.map(r => num(r.rainfall_mm ?? r.rainfall, 0));
-  const tempMax  = rows.map(r => num(r.temp_max ?? r.temperature_max, 32));
-  const wind     = rows.map(r => num(r.wind_speed_kmh ?? r.wind_speed, 15));
-  const stormDays = rows.filter(r => {
-    const sw = (r.storm_warning ?? r.storm ?? '').toLowerCase();
-    return sw === 'true' || sw === '1' || sw === 'yes';
-  }).length;
-  // Spike detection: flag if any single day rainfall is >3× the average
-  const avgRainfall = avg(rainfall);
-  const maxRainfall = Math.max(...rainfall, 0);
-  const rainfallSpike = avgRainfall > 0 && maxRainfall > avgRainfall * 3;
+
+  const inputRows = rows.filter(r => r.input_type ?? r.type);
+  const lowerType = (r: OperationsRecord) => (r.input_type ?? r.type ?? '').toLowerCase();
+
+  const fertRows      = inputRows.filter(r => lowerType(r).match(/fert|npk|urea|compost/));
+  const pesticideRows = inputRows.filter(r => lowerType(r).match(/pesticide|herbicide|fungicide|spray|insect/));
+  const feedRows      = inputRows.filter(r => lowerType(r).match(/feed|pellet|aqua/));
+
+  const irrigRows     = rows.filter(r => r.irrigation_volume_l ?? r.irrigation_volume);
+  const irrigVolumes  = irrigRows.map(r => num(r.irrigation_volume_l ?? r.irrigation_volume, 0));
+
+  const eventRows = rows.filter(r => r.event_type ?? r.event);
+  const recentPesticide = pesticideRows.slice(-3).map(r => ({
+    date:   r.date   ?? 'N/A',
+    type:   r.input_type ?? r.type ?? 'Pesticide',
+    amount: r.input_amount ?? r.amount ?? '?',
+    unit:   r.input_unit  ?? r.unit  ?? '',
+  }));
+
+  // Detect special events (extreme weather, equipment failure, pruning)
+  const specialEventTypes = eventRows.map(r => r.event_type ?? r.event ?? '').filter(Boolean);
+
   return {
-    avgRainfallMm:  +avgRainfall.toFixed(1),
-    avgTempMaxC:    +avg(tempMax).toFixed(1),
-    maxWindKmh:     maxRainfall > 0 ? Math.max(...wind, 0) : 0,
-    stormDays,
-    recordCount:    rows.length,
-    // Trend signals
-    rainfallTrend:  trendLabel(rainfall, 'mm'),
-    tempTrend:      trendLabel(tempMax, '°C'),
-    windTrend:      trendLabel(wind, 'km/h'),
-    // Spike alert — e.g. [0,0,0,10,150] avg=32 hides the flood event on day 5
-    rainfallSpike,
-    maxSingleDayRain: maxRainfall,
-    recentRainfall:   rainfall.slice(-3),
+    totalInputEvents:        inputRows.length,
+    totalFertilizerEvents:   fertRows.length,
+    totalPesticideEvents:    pesticideRows.length,
+    totalFeedEvents:         feedRows.length,
+    totalIrrigationEvents:   irrigRows.length,
+    avgIrrigationVolumeL:    irrigVolumes.length ? +avg(irrigVolumes).toFixed(0) : 0,
+    specialEventCount:       eventRows.length,
+    specialEventTypes:       [...new Set(specialEventTypes)].slice(0, 5),
+    recentPesticide,
+    recordCount: rows.length,
+    sampleDates: rows.slice(0, 3).map(r => r.date).filter(Boolean),
   };
 }
 
-function summariseSales(rows: SalesRecord[]) {
+function summariseFinancial(rows: FinancialRecord[]) {
   if (!rows.length) return null;
-  const prices   = rows.map(r => num(r.price_per_kg ?? r.price, 55)).filter(p => p > 0);
+
+  const prices   = rows.map(r => num(r.market_price_per_kg ?? r.price_per_kg ?? r.price, 55)).filter(p => p > 0);
   const volumes  = rows.map(r => num(r.volume_kg ?? r.volume, 0));
-  const channels = rows.map(r => r.channel ?? r.market ?? 'Local').filter(Boolean);
+  const yields   = rows.map(r => num(r.harvest_weight_kg ?? r.yield_kg, 0));
+  const gradeAs  = rows.map(r => num(r.grade_a_pct ?? r.grade_a, 0)).filter(v => v > 0);
+  const fertCosts   = rows.map(r => num(r.fertilizer_cost ?? r.fert_cost, 0)).filter(v => v > 0);
+  const laborCosts  = rows.map(r => num(r.labor_cost, 0)).filter(v => v > 0);
+  const equipCosts  = rows.map(r => num(r.equipment_cost ?? r.maintenance_cost, 0)).filter(v => v > 0);
+  const channels    = rows.map(r => r.channel ?? r.market ?? 'Local').filter(Boolean);
+
   const channelCounts: Record<string, number> = {};
   channels.forEach(c => { channelCounts[c] = (channelCounts[c] ?? 0) + 1; });
+
   return {
-    avgPricePerKg:  +avg(prices).toFixed(2),
-    minPrice:       prices.length ? Math.min(...prices) : 55,
-    maxPrice:       prices.length ? Math.max(...prices) : 55,
+    avgPricePerKg:     +avg(prices).toFixed(2),
+    minPrice:          prices.length ? Math.min(...prices) : 55,
+    maxPrice:          prices.length ? Math.max(...prices) : 55,
     priceVolatilityPct: prices.length > 1
       ? Math.round(((Math.max(...prices) - Math.min(...prices)) / avg(prices)) * 100)
       : 0,
-    avgVolumeKg:    +avg(volumes).toFixed(0),
-    channelBreakdown: channelCounts,
-    dominantChannel: Object.entries(channelCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'Local Market',
-    recordCount:    rows.length,
+    avgVolumeKg:       +avg(volumes).toFixed(0),
+    totalYieldKg:      +yields.reduce((a, b) => a + b, 0).toFixed(0),
+    avgGradeAPct:      gradeAs.length ? +avg(gradeAs).toFixed(1) : null,
+    avgFertCostRM:     fertCosts.length  ? +avg(fertCosts).toFixed(0)  : null,
+    avgLaborCostRM:    laborCosts.length ? +avg(laborCosts).toFixed(0) : null,
+    avgEquipCostRM:    equipCosts.length ? +avg(equipCosts).toFixed(0) : null,
+    channelBreakdown:  channelCounts,
+    dominantChannel:   Object.entries(channelCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'Local Market',
+    recordCount: rows.length,
+    priceTrend:        trendLabel(prices, 'RM/kg'),
   };
 }
 
-// --- Unsalable Risk Analysis (滞销解决方案) ------------------------------------
-// Deterministically computes unsalable risk flags from raw sales rows.
+// --- Financial Risk Analysis --------------------------------------------------
+// Deterministically computes unsalable risk flags from raw financial rows.
 // Runs server-side so the frontend always gets structured data regardless
 // of whether the LLM call succeeds.
 
-function analyzeSalesData(rows: SalesRecord[]): {
+function analyzeFinancialData(rows: FinancialRecord[]): {
   unsalableRisk: boolean;
   alternativeStrategy: string | null;
 } {
   if (!rows.length) return { unsalableRisk: false, alternativeStrategy: null };
 
-  const prices  = rows.map(r => num(r.price_per_kg ?? r.price, 55)).filter(p => p > 0);
-  const volumes = rows.map(r => num(r.volume_kg   ?? r.volume, 0));
+  const prices  = rows.map(r => num(r.market_price_per_kg ?? r.price_per_kg ?? r.price, 55)).filter(p => p > 0);
+  const volumes = rows.map(r => num(r.volume_kg ?? r.volume, 0));
 
   const avgPrice  = prices.length  ? avg(prices)  : 55;
   const avgVolume = volumes.length ? avg(volumes) : 0;
@@ -291,9 +382,9 @@ function analyzeSalesData(rows: SalesRecord[]): {
     ? Math.round(((maxPrice - minPrice) / avgPrice) * 100)
     : 0;
 
-  const isOversupplied  = avgVolume > 1000;       // >1 tonne avg/record = bulk stock signal
-  const isPriceDropping = avgPrice  < 40;          // below RM 40/kg = distress pricing
-  const isHighVolatile  = priceVolatilityPct > 30; // >30% swing = unstable market
+  const isOversupplied  = avgVolume > 1000;
+  const isPriceDropping = avgPrice  < 40;
+  const isHighVolatile  = priceVolatilityPct > 30;
 
   const unsalableRisk = isOversupplied || isPriceDropping || isHighVolatile;
 
@@ -318,10 +409,10 @@ async function tavilySearch(query: string, maxResults = 4): Promise<TavilyResult
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        api_key:      TAVILY_KEY,
+        api_key:        TAVILY_KEY,
         query,
-        search_depth: 'basic',
-        max_results:  maxResults,
+        search_depth:   'basic',
+        max_results:    maxResults,
         include_answer: false,
       }),
     });
@@ -338,40 +429,40 @@ async function tavilySearch(query: string, maxResults = 4): Promise<TavilyResult
   }
 }
 
-// Decide which Tavily queries to run based on sales signals
+// Decide which Tavily queries to run based on financial & operations signals
 async function fetchMarketIntelligence(
-  sales: ReturnType<typeof summariseSales>,
-  weather: ReturnType<typeof summariseWeather>
+  financial:  ReturnType<typeof summariseFinancial>,
+  operations: ReturnType<typeof summariseOperations>
 ): Promise<{ query: string; results: TavilyResult[] }[]> {
   const searches: { query: string; results: TavilyResult[] }[] = [];
 
-  if (!sales) return searches;
+  if (!financial) return searches;
 
-  // Signal 1: Price dropping or high volatility -> export channel search
-  if (sales.priceVolatilityPct > 20 || sales.avgPricePerKg < 45) {
+  // Signal 1: Price dropping or high volatility → export channel search
+  if (financial.priceVolatilityPct > 20 || financial.avgPricePerKg < 45) {
     searches.push({
       query:   'latest durian export prices Singapore Hong Kong 2025 2026 Musang King',
       results: await tavilySearch('latest durian export prices Singapore Hong Kong 2025 2026 Musang King'),
     });
   }
 
-  // Signal 2: Any price data -> check Thai supply competition
+  // Signal 2: Any price data → check Thai supply competition
   searches.push({
     query:   'Thailand durian supply export volume 2025 2026 market competition Malaysia',
     results: await tavilySearch('Thailand durian supply export volume 2025 2026 market competition Malaysia'),
   });
 
-  // Signal 3: Oversupply (high volume, low price) -> by-product / alternative channel
-  const oversupply = sales.avgVolumeKg > 500 && sales.avgPricePerKg < 50;
-  if (oversupply || sales.priceVolatilityPct > 30) {
+  // Signal 3: Oversupply (high volume, low price) → by-product / alternative channel
+  const oversupply = financial.avgVolumeKg > 500 && financial.avgPricePerKg < 50;
+  if (oversupply || financial.priceVolatilityPct > 30) {
     searches.push({
       query:   'durian by-product processing dessert companies Malaysia unsold crop alternative sales channels',
       results: await tavilySearch('durian by-product processing dessert companies Malaysia unsold crop alternative sales channels'),
     });
   }
 
-  // Signal 4: Extreme weather in data -> insurance / recovery
-  if (weather && (weather.stormDays > 2 || weather.avgRainfallMm > 50)) {
+  // Signal 4: Special events logged in operations (extreme weather / equipment failure)
+  if (operations && operations.specialEventCount > 0) {
     searches.push({
       query:   'Malaysia agricultural crop insurance weather protection durian farm 2025',
       results: await tavilySearch('Malaysia agricultural crop insurance weather protection durian farm 2025'),
@@ -399,18 +490,16 @@ function formatMarketIntel(intel: { query: string; results: TavilyResult[] }[]):
     .join('\n\n');
 }
 
-// --- Default safe values (used as fallback if GLM fails) ---------------------
+// --- Default safe values (used as fallback if Gemini fails) ---------------------
 
 function buildDefaultResult(
-  plantRows: Record<string, string>[],
-  envRows:   Record<string, string>[],
-  weatherRows: Record<string, string>[],
-  salesRows: Record<string, string>[],
+  envGeoRows:    Record<string, string>[],
+  bioCropRows:   Record<string, string>[],
+  operationsRows: Record<string, string>[],
+  financialRows: Record<string, string>[],
   filesUploaded: number
 ): AnalysisResult {
-  // Deterministic unsalable risk computed directly from raw sales rows —
-  // this works even if the LLM call is skipped entirely.
-  const { unsalableRisk, alternativeStrategy } = analyzeSalesData(salesRows as SalesRecord[]);
+  const { unsalableRisk, alternativeStrategy } = analyzeFinancialData(financialRows as FinancialRecord[]);
 
   return {
     bioFertReduction: 0,
@@ -456,7 +545,7 @@ function buildDefaultResult(
       avgPricePerKg: 55, avgVolumeKg: 0,
       priceVolatilityPct: 0, minPrice: 55, maxPrice: 55,
       dominantChannel: 'Local Market',
-      hasData: salesRows.length > 0,
+      hasData: financialRows.length > 0,
       unsalableRisk,
       alternativeStrategy,
     },
@@ -471,13 +560,16 @@ function buildDefaultResult(
     recommendation: 'Analysis engine initialised with default parameters. Upload farm data files for a personalised AI-driven recommendation.',
     marketNews: [],
     summary: {
-      totalDataPoints:    plantRows.length + envRows.length + weatherRows.length + salesRows.length,
-      plantGrowthRecords: plantRows.length,
-      envRecords:         envRows.length,
-      weatherRecords:     weatherRows.length,
-      salesRecords:       salesRows.length,
+      // Map new categories to legacy summary field names for frontend compatibility:
+      // envGeo → envRecords, bioCrop → plantGrowthRecords,
+      // operations → weatherRecords, financial → salesRecords
+      totalDataPoints:    envGeoRows.length + bioCropRows.length + operationsRows.length + financialRows.length,
+      plantGrowthRecords: bioCropRows.length,
+      envRecords:         envGeoRows.length,
+      weatherRecords:     operationsRows.length,
+      salesRecords:       financialRows.length,
       overallHealthScore: 72,
-      riskLevel:         'MEDIUM',
+      riskLevel:          'MEDIUM',
       filesUploaded,
     },
   };
@@ -486,7 +578,6 @@ function buildDefaultResult(
 // --- Strip markdown fences from LLM output -----------------------------------
 
 function stripMarkdownJSON(text: string): string {
-  // Remove ```json ... ``` or ``` ... ``` wrappers
   return text
     .replace(/^```(?:json)?\s*/i, '')
     .replace(/\s*```\s*$/, '')
@@ -494,7 +585,6 @@ function stripMarkdownJSON(text: string): string {
 }
 
 // --- Validate and repair the LLM JSON before returning it --------------------
-// Ensures every field the frontend requires is present and correctly typed.
 
 function sanitiseResult(raw: any, defaults: AnalysisResult): AnalysisResult {
   const d = defaults;
@@ -504,8 +594,8 @@ function sanitiseResult(raw: any, defaults: AnalysisResult): AnalysisResult {
   const str_  = (v: unknown, fb: string) => (typeof v === 'string' && v.trim() ? v.trim() : fb);
   const arr_  = (v: unknown, fb: unknown[]) => (Array.isArray(v) ? v : fb);
 
-  const ph = r.plantHealth ?? {};
-  const npk = ph.npk ?? {};
+  const ph  = r.plantHealth  ?? {};
+  const npk = ph.npk         ?? {};
   const nit = npk.nitrogen   ?? {};
   const pho = npk.phosphorus ?? {};
   const pot = npk.potassium  ?? {};
@@ -516,7 +606,6 @@ function sanitiseResult(raw: any, defaults: AnalysisResult): AnalysisResult {
   const sm  = r.summary      ?? {};
   const inp = r.inputs       ?? {};
 
-  // Forecast: must be exactly 7 entries with required shape
   const defaultForecast = d.weatherDetails.forecast;
   const rawForecast = arr_(wd.forecast, defaultForecast).slice(0, 7);
   const forecast = defaultForecast.map((def, i) => {
@@ -529,7 +618,6 @@ function sanitiseResult(raw: any, defaults: AnalysisResult): AnalysisResult {
     };
   });
 
-  // Compliance: must be array of {label, status, detail}
   const complianceDefaults = d.compliance;
   const rawCompliance = arr_(r.compliance, complianceDefaults);
   const compliance = complianceDefaults.map((def, i) => {
@@ -542,11 +630,8 @@ function sanitiseResult(raw: any, defaults: AnalysisResult): AnalysisResult {
     };
   });
 
-  // weatherRisk
   const validRisks = ['rain', 'drought', 'wind', null];
   const weatherRisk = validRisks.includes(r.weatherRisk) ? r.weatherRisk : null;
-
-  // riskLevel
   const riskLevel = ['LOW', 'MEDIUM', 'HIGH'].includes(sm.riskLevel) ? sm.riskLevel : 'MEDIUM';
 
   return {
@@ -554,7 +639,7 @@ function sanitiseResult(raw: any, defaults: AnalysisResult): AnalysisResult {
     bioIrrigation:    clamp(num_(r.bioIrrigation, d.bioIrrigation), 1, 8),
     inputs: {
       fert:  clamp(num_(inp.fert,  d.inputs.fert),  200, 800),
-      labor: clamp(num_(inp.labor, d.inputs.labor),  0,  300),
+      labor: clamp(num_(inp.labor, d.inputs.labor),   0, 300),
     },
     loanRate: clamp(num_(r.loanRate, d.loanRate), 3, 15),
     plantHealth: {
@@ -602,10 +687,8 @@ function sanitiseResult(raw: any, defaults: AnalysisResult): AnalysisResult {
       minPrice:            num_(si.minPrice,            d.salesInsights.minPrice),
       maxPrice:            num_(si.maxPrice,            d.salesInsights.maxPrice),
       dominantChannel:     str_(si.dominantChannel,    d.salesInsights.dominantChannel),
-      hasData:             typeof si.hasData === 'boolean'        ? si.hasData            : d.salesInsights.hasData,
-      // These two fields come from the deterministic analyzeSalesData() layer;
-      // prefer the LLM's value if valid, otherwise fall through to the server-computed default.
-      unsalableRisk:       typeof si.unsalableRisk === 'boolean'  ? si.unsalableRisk      : d.salesInsights.unsalableRisk,
+      hasData:             typeof si.hasData === 'boolean'        ? si.hasData           : d.salesInsights.hasData,
+      unsalableRisk:       typeof si.unsalableRisk === 'boolean'  ? si.unsalableRisk     : d.salesInsights.unsalableRisk,
       alternativeStrategy: typeof si.alternativeStrategy === 'string' && si.alternativeStrategy.trim()
                              ? si.alternativeStrategy
                              : d.salesInsights.alternativeStrategy,
@@ -625,7 +708,7 @@ function sanitiseResult(raw: any, defaults: AnalysisResult): AnalysisResult {
   };
 }
 
-// --- Build the GLM prompt -----------------------------------------------------
+// --- Build the Gemini prompt -----------------------------------------------------
 
 function buildSystemPrompt(): string {
   return `You are BioFin Oracle AI - an expert agricultural intelligence engine specializing in Malaysian durian farming, financial analysis, and smart agriculture decision-making.
@@ -633,26 +716,27 @@ function buildSystemPrompt(): string {
 You will receive structured farm data summaries and optional live market intelligence from web searches. Your job is to analyze this data deeply and return a SINGLE, complete JSON object.
 
 ## Your Analysis Responsibilities:
-1. **Plant Health**: Calculate bioHealthIndex (0-100) based on fertilizer balance, irrigation frequency vs. optimal (3-5x/week), soil pH (ideal 5.8-7.0), soil moisture (ideal 70-90%), and NPK ratios. Convert NPK ppm to percentage bars (nitrogen: pct = ppm/60*100 capped at 100, phosphorus: pct = ppm/35*100 capped at 100, potassium: pct = ppm/140*100 capped at 100).
-2. **Financial Projections**: Calculate costs, revenue, profit based on fertilizer, labor, weather risk. Use actual sales data if provided.
-3. **Weather Risk**: Classify as "rain" (storms > 2 days or rainfall > 50mm avg), "drought" (temp_max > 35C and rainfall < 5mm), "wind" (max wind > 24 km/h), or null. Build a 7-day forecast.
+1. **Plant Health**: Calculate bioHealthIndex (0-100) based on soil pH from EnvGeo data (ideal 5.8-7.0), NPK levels, operations frequency (fertilizer, irrigation events), and crop biological signals from BioCrop data. Convert NPK ppm to percentage bars (nitrogen: pct = ppm/60*100 capped at 100, phosphorus: pct = ppm/35*100 capped at 100, potassium: pct = ppm/140*100 capped at 100). Use soilPH and soilMoisture from EnvGeo data.
+2. **Financial Projections**: Calculate costs, revenue, profit from Financial data. Use actual market_price_per_kg, yield data, and cost breakdown if provided.
+3. **Weather Risk**: Classify as "rain" (special events indicating flooding/storm), "drought" (temp signals and no irrigation), "wind" (storm events), or null. Build a 7-day forecast.
 4. **Compliance**: Assess Malaysian LHDN e-invoicing and MyGAP certification status.
 5. **Recommendation**: Write a specific, actionable 2-3 sentence recommendation in English. If live market search results are provided, use them to inform unsalable crop solutions, alternative channels, or market timing.
 6. **Risk Level**: Classify overall farm risk as "LOW", "MEDIUM", or "HIGH".
 
-## bioFertReduction Calculation:
-- Optimal fertilizer: 400 kg/ha
-- If fertilizer < 400: reduction = (400 - fertilizer) / 20
-- If fertilizer > 600: add penalty = (fertilizer - 600) / 15
+## bioFertReduction Calculation (infer from operations data):
+- Optimal fertilizer events: ~12/year. Count fertilizer events from operations log.
+- If fertilizer input is infrequent (< 8 events): bioFertReduction = (12 - events) * 3, capped at 50
+- If fertilizer amount data available, use: optimal 400 kg/ha; deviation drives reduction
 - Clamp between 0 and 50
 
-## bioIrrigation Calculation:
-- If irrigation_frequency field exists: use directly (clamp 1-8)
-- Else: infer from irrigation_mm / 5 (divide mm by 5mm per event), clamp 1-8
+## bioIrrigation Calculation (infer from operations data):
+- Optimal: 4 irrigation events/month. Count irrigation events from operations log.
+- Clamp 1-8
 
 ## Grade A/B Ratios:
 - gradeARatio = 78 - (bioFertReduction * 0.85) - (abs(bioIrrigation - 4) * 2.8), clamp 28-90
 - gradeBRatio = 22 + (bioFertReduction * 0.6) + (abs(bioIrrigation - 4) * 2.0), clamp 5-65
+- If grade_a_pct data is present in Financial data, weight it 50% against the formula result.
 
 ## Cash Runway:
 - Base: 142 days
@@ -706,8 +790,8 @@ The JSON must exactly match this TypeScript interface:
     "avgPricePerKg": number, "avgVolumeKg": number,
     "priceVolatilityPct": number, "minPrice": number, "maxPrice": number,
     "dominantChannel": string, "hasData": boolean,
-    "unsalableRisk": boolean,           // true if avgPrice < 40, avgVolume > 1000, or volatility > 30%
-    "alternativeStrategy": string | null  // by-product pivot recommendation, or null if market healthy
+    "unsalableRisk": boolean,
+    "alternativeStrategy": string | null
   },
   "compliance": [
     { "label": "Invoice XML Format",             "status": "ok"|"warn"|"error", "detail": string },
@@ -728,59 +812,67 @@ The JSON must exactly match this TypeScript interface:
 }
 
 function buildUserPrompt(
-  plant:   ReturnType<typeof summarisePlant>,
-  env:     ReturnType<typeof summariseEnv>,
-  weather: ReturnType<typeof summariseWeather>,
-  sales:   ReturnType<typeof summariseSales>,
-  intel:   string,
-  counts:  { plant: number; env: number; weather: number; sales: number; files: number },
+  envGeo:     ReturnType<typeof summariseEnvGeo>,
+  bioCrop:    ReturnType<typeof summariseBioCrop>,
+  operations: ReturnType<typeof summariseOperations>,
+  financial:  ReturnType<typeof summariseFinancial>,
+  intel:      string,
+  counts:     { envGeo: number; bioCrop: number; operations: number; financial: number; files: number },
 ): string {
   const sections: string[] = [];
-
   sections.push('## Uploaded Farm Data Summary\n');
 
-  if (plant) {
-    sections.push(`### Plant Growth Data (${plant.recordCount} records)
-- Avg Fertilizer: ${plant.avgFertilizer} kg/ha | Trend: ${plant.fertilizerTrend}
-- Avg Irrigation: ${plant.avgIrrigationMm} mm/event | Frequency field: ${plant.avgIrrigFreq || 'not provided'}
-- Avg Labor Hours: ${plant.avgLaborHours} hrs
-- Avg Soil pH: ${plant.avgSoilPH} | Soil Moisture: ${plant.avgSoilMoisture}% | Trend: ${plant.moistureTrend}
-- Avg NPK - Nitrogen: ${plant.avgNitrogenPPM} ppm (${plant.nitrogenTrend}) | Phosphorus: ${plant.avgPhosphorusPPM} ppm | Potassium: ${plant.avgPotassiumPPM} ppm
-- Recent Moisture Readings (last 3): ${plant.recentMoisture.join(', ')}%
-- Sample Dates: ${plant.sampleDates.join(', ') || 'N/A'}`);
+  // ── Category 1: Environmental & Geospatial ────────────────────────────────
+  if (envGeo) {
+    sections.push(`### 1. Environmental & Geospatial Data (${envGeo.recordCount} records)
+- GPS/Location provided: ${envGeo.gpsProvided ? 'Yes' : 'No'}
+- Soil pH: avg ${envGeo.avgSoilPH} | Latest reading: ${envGeo.latestSoilPH} | Trend: ${envGeo.phTrend}
+- Recent pH readings (last 3): ${envGeo.recentPhReadings.join(', ')}
+- Soil NPK — Nitrogen: ${envGeo.avgNitrogenPPM} ppm (${envGeo.nitrogenTrend}) | Phosphorus: ${envGeo.avgPhosphorusPPM} ppm | Potassium: ${envGeo.avgPotassiumPPM} ppm
+- Organic Matter: ${envGeo.avgOrganicMatterPct !== null ? `${envGeo.avgOrganicMatterPct}%` : 'Not provided'}
+- Soil Type: ${envGeo.soilType}
+- Water Source: type=${envGeo.waterType} | Dissolved Oxygen: ${envGeo.avgDissolvedOxygen !== null ? `${envGeo.avgDissolvedOxygen} mg/L` : 'N/A'} | Ammonia Nitrogen: ${envGeo.avgAmmoniaNitrogen} mg/L
+- Sample Dates: ${envGeo.sampleDates.join(', ') || 'N/A'}`);
   } else {
-    sections.push('### Plant Growth Data: NOT UPLOADED - use intelligent defaults for durian farming in Malaysia');
+    sections.push('### 1. Environmental & Geospatial Data: NOT UPLOADED — use intelligent defaults for Malaysian durian farm (soil pH 6.5, NPK N:42 P:18 K:120 ppm, peat soil)');
   }
 
-  if (env) {
-    sections.push(`\n### Environment Data (${env.recordCount} records)
-- Avg Temp: ${env.avgTempC} degC | Trend: ${env.tempTrend} | Recent: ${env.recentTemps.join(', ')}°C
-- Humidity: ${env.avgHumidity}% | Trend: ${env.humidityTrend}
-- Solar: ${env.avgSolar} W/m2 | Avg Wind: ${env.avgWind} km/h | Pressure: ${env.avgPressure} hPa
-- CO2: ${env.avgCO2} ppm | Trend: ${env.co2Trend}`);
+  // ── Category 2: Biological & Crop ────────────────────────────────────────
+  if (bioCrop) {
+    const cvSummary = bioCrop.imageRecordsCount > 0
+      ? `Image records: ${bioCrop.imageRecordsCount} | CV Labels detected: ${bioCrop.detectedCVLabels.join(', ') || 'none'} | Avg CV confidence: ${bioCrop.avgCVConfidence ?? 'N/A'}%`
+      : 'No image/CV data uploaded';
+    sections.push(`\n### 2. Biological & Crop Data (${bioCrop.recordCount} records)
+- Crop Variety/Strain: ${bioCrop.cropVariety}
+- Sowing/Planting Date: ${bioCrop.sowingDate ?? 'Not recorded'}
+- Expected Harvest Date: ${bioCrop.expectedHarvestDate ?? 'Not recorded'}
+- Computer Vision Field Images: ${cvSummary}`);
   } else {
-    sections.push('\n### Environment Data: NOT UPLOADED - use intelligent defaults');
+    sections.push('\n### 2. Biological & Crop Data: NOT UPLOADED — use Musang King (D197) defaults, standard growth cycle');
   }
 
-  if (weather) {
-    sections.push(`\n### Weather Records (${weather.recordCount} records)
-- Avg Rainfall: ${weather.avgRainfallMm} mm | Trend: ${weather.rainfallTrend}
-- Recent Rainfall (last 3 days): ${weather.recentRainfall.join(', ')} mm${weather.rainfallSpike ? ` ⚠ SPIKE DETECTED — single day max: ${weather.maxSingleDayRain}mm` : ''}
-- Avg Temp Max: ${weather.avgTempMaxC} degC | Trend: ${weather.tempTrend}
-- Max Wind: ${weather.maxWindKmh} km/h | Trend: ${weather.windTrend}
-- Storm Days: ${weather.stormDays}`);
+  // ── Category 3: Farming Operations ───────────────────────────────────────
+  if (operations) {
+    sections.push(`\n### 3. Farming Operations Data (${operations.recordCount} records)
+- Total Input Events: ${operations.totalInputEvents} | Fertilizer: ${operations.totalFertilizerEvents} | Pesticide/Herbicide: ${operations.totalPesticideEvents} | Aquaculture Feed: ${operations.totalFeedEvents}
+- Irrigation Events: ${operations.totalIrrigationEvents} | Avg Volume: ${operations.avgIrrigationVolumeL} L/event
+- Special Events (weather/equipment/pruning): ${operations.specialEventCount} total — types: ${operations.specialEventTypes.join(', ') || 'none recorded'}
+- Recent Pesticide Applications (last 3): ${JSON.stringify(operations.recentPesticide)}
+- Sample Dates: ${operations.sampleDates.join(', ') || 'N/A'}`);
   } else {
-    sections.push('\n### Weather Records: NOT UPLOADED - use intelligent defaults');
+    sections.push('\n### 3. Farming Operations Data: NOT UPLOADED — infer fertilizer/irrigation activity from defaults');
   }
 
-  if (sales) {
-    sections.push(`\n### Sales & Pricing History (${sales.recordCount} records)
-- Avg Price/kg: RM ${sales.avgPricePerKg} | Min: RM ${sales.minPrice} | Max: RM ${sales.maxPrice}
-- Price Volatility: ${sales.priceVolatilityPct}% | Avg Volume: ${sales.avgVolumeKg} kg
-- Channel Breakdown: ${JSON.stringify(sales.channelBreakdown)}
-- Dominant Channel: ${sales.dominantChannel}`);
+  // ── Category 4: Financial & Commercial ───────────────────────────────────
+  if (financial) {
+    sections.push(`\n### 4. Financial & Commercial Data (${financial.recordCount} records)
+- Market Price: avg RM ${financial.avgPricePerKg}/kg | Min: RM ${financial.minPrice} | Max: RM ${financial.maxPrice} | Trend: ${financial.priceTrend}
+- Price Volatility: ${financial.priceVolatilityPct}% | Avg Sales Volume: ${financial.avgVolumeKg} kg
+- Total Yield Recorded: ${financial.totalYieldKg} kg | Grade A Ratio: ${financial.avgGradeAPct !== null ? `${financial.avgGradeAPct}%` : 'Not provided'}
+- Cost Breakdown — Fertilizer: ${financial.avgFertCostRM !== null ? `RM ${financial.avgFertCostRM}` : 'N/A'} | Labor: ${financial.avgLaborCostRM !== null ? `RM ${financial.avgLaborCostRM}` : 'N/A'} | Equipment/Maintenance: ${financial.avgEquipCostRM !== null ? `RM ${financial.avgEquipCostRM}` : 'N/A'}
+- Dominant Sales Channel: ${financial.dominantChannel} | Channel Breakdown: ${JSON.stringify(financial.channelBreakdown)}`);
   } else {
-    sections.push('\n### Sales History: NOT UPLOADED - use RM 55/kg default price, 0 volume');
+    sections.push('\n### 4. Financial & Commercial Data: NOT UPLOADED — use RM 55/kg default price, 0 volume, standard cost estimates');
   }
 
   sections.push(`\n## Live Market Intelligence (Tavily Web Search Results)
@@ -790,45 +882,73 @@ ${intel}`);
 - Farm: Malaysian Musang King (Durian) operation, likely Pahang/Johor region
 - Currency: Malaysian Ringgit (RM)
 - Compliance context: LHDN MyInvois e-invoicing Phase 3, MyGAP certification, SST 6%
-- Files uploaded: ${counts.files}/4
-- Total data records: ${counts.plant + counts.env + counts.weather + counts.sales}
+- Files uploaded: ${counts.files}/4 (envGeo: ${counts.envGeo} recs | bioCrop: ${counts.bioCrop} recs | operations: ${counts.operations} recs | financial: ${counts.financial} recs)
+- Total data records: ${counts.envGeo + counts.bioCrop + counts.operations + counts.financial}
+- Note: summary.plantGrowthRecords = bioCrop count, summary.envRecords = envGeo count, summary.weatherRecords = operations count, summary.salesRecords = financial count
 
 Now perform your complete analysis and output the JSON object ONLY. No text before or after.`);
 
   return sections.join('\n');
 }
 
-// --- Call GLM API -------------------------------------------------------------
+// --- Call Gemini API ----------------------------------------------------------
 
-async function callGLM(systemPrompt: string, userPrompt: string): Promise<string> {
-  const res = await fetch(`${GLM_BASE_URL}/chat/completions`, {
-    method:  'POST',
-    headers: {
-      'Content-Type':  'application/json',
-      'Authorization': `Bearer ${GLM_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model:       GLM_MODEL,
-      temperature: 0.2,    // Low temperature for deterministic structured output
-      max_tokens:  4096,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user',   content: userPrompt   },
-      ],
-    }),
-  });
+const GEMINI_FALLBACK_MODELS = ['gemini-1.5-flash', 'gemini-1.5-pro'];
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => 'unknown');
-    throw new Error(`GLM API error ${res.status}: ${errText}`);
+async function callGemini(systemPrompt: string, userPrompt: string): Promise<string> {
+  const modelsToTry = [GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS.filter(m => m !== GEMINI_MODEL)];
+
+  let lastError = '';
+  for (const model of modelsToTry) {
+    try {
+      // Use Google's OpenAI-compatible endpoint — broader auth support
+      const url = `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`;
+
+      const res = await fetch(url, {
+        method:  'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${GEMINI_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model,
+          temperature:  0.2,
+          max_tokens:   4096,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user',   content: userPrompt   },
+          ],
+        }),
+      });
+
+      const responseText = await res.text();
+
+      if (!res.ok) {
+        lastError = `Gemini API error ${res.status} (model: ${model}): ${responseText.slice(0, 300)}`;
+        console.warn(`[BioFin] ${lastError} — trying next model…`);
+        continue;
+      }
+
+      const data = JSON.parse(responseText) as any;
+      const content = data?.choices?.[0]?.message?.content;
+      if (typeof content !== 'string' || !content.trim()) {
+        lastError = `Gemini returned empty content (model: ${model})`;
+        console.warn(`[BioFin] ${lastError} — trying next model…`);
+        continue;
+      }
+
+      if (model !== GEMINI_MODEL) {
+        console.log(`[BioFin] Used fallback model: ${model}`);
+      }
+      return content;
+
+    } catch (err) {
+      lastError = String(err);
+      console.warn(`[BioFin] Gemini fetch error (model: ${model}):`, err);
+    }
   }
 
-  const data = await res.json() as any;
-  const content = data?.choices?.[0]?.message?.content;
-  if (typeof content !== 'string' || !content.trim()) {
-    throw new Error('GLM returned empty content');
-  }
-  return content;
+  throw new Error(lastError || 'All Gemini models failed');
 }
 
 // --- POST Handler -------------------------------------------------------------
@@ -837,49 +957,58 @@ export async function POST(request: NextRequest) {
   let filesUploaded = 0;
 
   // -- 1. Parse uploaded files -----------------------------------------------
-  let plantRows:   Record<string, string>[] = [];
-  let envRows:     Record<string, string>[] = [];
-  let weatherRows: Record<string, string>[] = [];
-  let salesRows:   Record<string, string>[] = [];
+  let envGeoRows:    Record<string, string>[] = [];
+  let bioCropRows:   Record<string, string>[] = [];
+  let operationsRows: Record<string, string>[] = [];
+  let financialRows: Record<string, string>[] = [];
 
   try {
     const formData = await request.formData();
 
-    const plantFile   = formData.get('plantGrowth')    as File | null;
-    const envFile     = formData.get('envVars')         as File | null;
-    const weatherFile = formData.get('weatherRecords') as File | null;
-    const salesFile   = formData.get('salesHistory')   as File | null;
+    // getAll() returns an array — supports multiple files per category
+    const envGeoFileArr    = formData.getAll('envGeoData')      as File[];
+    const bioCropFileArr   = formData.getAll('bioCropData')     as File[];
+    const operationsFileArr = formData.getAll('operationsData') as File[];
+    const financialFileArr  = formData.getAll('financialData')  as File[];
 
-    filesUploaded = [plantFile, envFile, weatherFile, salesFile].filter(Boolean).length;
+    // Count categories that have at least one file
+    filesUploaded = [envGeoFileArr, bioCropFileArr, operationsFileArr, financialFileArr]
+      .filter(arr => arr.length > 0).length;
 
-    [plantRows, envRows, weatherRows, salesRows] = await Promise.all([
-      plantFile   ? readFile(plantFile)   : Promise.resolve([]),
-      envFile     ? readFile(envFile)     : Promise.resolve([]),
-      weatherFile ? readFile(weatherFile) : Promise.resolve([]),
-      salesFile   ? readFile(salesFile)   : Promise.resolve([]),
+    // Process all files per category and concatenate records
+    const readAllFiles = async (files: File[], imageOk: boolean): Promise<Record<string, string>[]> => {
+      const results = await Promise.all(
+        files.map(f => imageOk ? readFileOrImage(f) : readFile(f))
+      );
+      return results.flat();
+    };
+
+    [envGeoRows, bioCropRows, operationsRows, financialRows] = await Promise.all([
+      envGeoFileArr.length    ? readAllFiles(envGeoFileArr,    true)  : Promise.resolve([]),
+      bioCropFileArr.length   ? readAllFiles(bioCropFileArr,   true)  : Promise.resolve([]),
+      operationsFileArr.length ? readAllFiles(operationsFileArr, false) : Promise.resolve([]),
+      financialFileArr.length  ? readAllFiles(financialFileArr,  false) : Promise.resolve([]),
     ]);
   } catch (parseErr) {
     console.error('[BioFin] File parse error:', parseErr);
     // Non-fatal: continue with empty arrays and let AI use defaults
   }
 
-  const defaults = buildDefaultResult(plantRows, envRows, weatherRows, salesRows, filesUploaded);
+  const defaults = buildDefaultResult(envGeoRows, bioCropRows, operationsRows, financialRows, filesUploaded);
 
-  // -- 2. Summarise data into compact stats ---------------------------------
-  const plant   = summarisePlant(plantRows   as PlantRecord[]);
-  const env     = summariseEnv(envRows       as EnvRecord[]);
-  const weather = summariseWeather(weatherRows as WeatherRecord[]);
-  const sales   = summariseSales(salesRows   as SalesRecord[]);
+  // -- 2. Summarise data into compact stats ----------------------------------
+  const envGeo    = summariseEnvGeo(envGeoRows       as EnvGeoRecord[]);
+  const bioCrop   = summariseBioCrop(bioCropRows     as BioCropRecord[]);
+  const operations = summariseOperations(operationsRows as OperationsRecord[]);
+  const financial  = summariseFinancial(financialRows  as FinancialRecord[]);
 
-  // -- 3. Live market intelligence (Tavily) ---------------------------------
-  let intelText  = 'No live market data retrieved (no sales data uploaded).';
-  // Flat list of news items passed through to the frontend (Defect 2 fix)
+  // -- 3. Live market intelligence (Tavily) ----------------------------------
+  let intelText  = 'No live market data retrieved (no financial data uploaded).';
   let marketNews: AnalysisResult['marketNews'] = [];
   try {
-    const intel = await fetchMarketIntelligence(sales, weather);
+    const intel = await fetchMarketIntelligence(financial, operations);
     intelText   = formatMarketIntel(intel);
-    // Flatten all results into a frontend-friendly array
-    marketNews = intel.flatMap(i =>
+    marketNews  = intel.flatMap(i =>
       i.results.map(r => ({
         query:   i.query,
         title:   r.title,
@@ -892,28 +1021,24 @@ export async function POST(request: NextRequest) {
     intelText = 'Live market search unavailable - proceeding with local analysis only.';
   }
 
-  // -- 4. Call GLM AI --------------------------------------------------------
+  // -- 4. Call Gemini AI --------------------------------------------------------
   try {
     const systemPrompt = buildSystemPrompt();
-    const userPrompt   = buildUserPrompt(plant, env, weather, sales, intelText, {
-      plant:   plantRows.length,
-      env:     envRows.length,
-      weather: weatherRows.length,
-      sales:   salesRows.length,
-      files:   filesUploaded,
+    const userPrompt   = buildUserPrompt(envGeo, bioCrop, operations, financial, intelText, {
+      envGeo:     envGeoRows.length,
+      bioCrop:    bioCropRows.length,
+      operations: operationsRows.length,
+      financial:  financialRows.length,
+      files:      filesUploaded,
     });
 
-    const rawLLMOutput = await callGLM(systemPrompt, userPrompt);
+    const rawLLMOutput = await callGemini(systemPrompt, userPrompt);
+    const cleanedJSON  = stripMarkdownJSON(rawLLMOutput);
 
-    // Strip any markdown fences the model might have added
-    const cleanedJSON = stripMarkdownJSON(rawLLMOutput);
-
-    // Parse the JSON
     let parsed: any;
     try {
       parsed = JSON.parse(cleanedJSON);
     } catch {
-      // Second attempt: find the first { and last } and extract
       const start = cleanedJSON.indexOf('{');
       const end   = cleanedJSON.lastIndexOf('}');
       if (start !== -1 && end > start) {
@@ -923,19 +1048,16 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Validate and repair against the required shape
     const result = sanitiseResult(parsed, defaults);
-
-    // Defect 2: attach live Tavily news so the frontend can render real articles
     return NextResponse.json({ ...result, marketNews });
 
   } catch (aiErr) {
-    // -- 5. Graceful AI fallback -------------------------------------------
+    // -- 5. Graceful AI fallback --------------------------------------------
     console.error('[BioFin] AI pipeline error - returning safe defaults:', aiErr);
 
     const enriched: AnalysisResult = {
       ...defaults,
-      marketNews,   // still pass through any Tavily results we managed to fetch
+      marketNews,
       summary: {
         ...defaults.summary,
         riskLevel: 'MEDIUM',
@@ -956,36 +1078,37 @@ export async function GET() {
   return NextResponse.json({
     status:  'ok',
     service: 'BioFin Oracle Analysis API - AI Edition',
-    version: '3.0.0',
+    version: '4.0.0',
     pipeline: {
-      step1: 'Parse uploaded CSV/JSON files (plant, env, weather, sales)',
-      step2: 'Summarise data into compact statistics for LLM context',
-      step3: 'Tavily live web search: market prices, competitors, by-product channels (triggered by sales signal)',
-      step4: 'GLM LLM call (nemo-super): full AI analysis -> strict JSON output',
+      step1: 'Parse uploaded CSV/JSON/Image files (envGeo, bioCrop, operations, financial)',
+      step2: 'Summarise data into compact statistics for LLM context (images → mock OCR/CV payload)',
+      step3: 'Tavily live web search: market prices, competitors, by-product channels (triggered by financial/operations signals)',
+      step4: 'Gemini API call (gemini-2.0-flash): full AI analysis -> strict JSON output',
       step5: 'Sanitise + validate JSON -> return AnalysisResult to frontend',
-      fallback: 'If GLM fails, return safe default values with error note in recommendation',
+      fallback: 'If Gemini fails, return safe default values with error note in recommendation',
     },
     models: {
-      llm:    `${GLM_BASE_URL}/chat/completions - model: ${GLM_MODEL}`,
+      llm:    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
       search: TAVILY_URL,
     },
     endpoints: {
       'POST /api/analyze': {
         accepts: 'multipart/form-data',
         fields: {
-          plantGrowth:    'CSV/JSON - fertilizer_kg_ha, irrigation_mm, irrigation_frequency, labor_hours, soil_ph, soil_moisture, nitrogen_ppm, phosphorus_ppm, potassium_ppm',
-          envVars:        'CSV/JSON - temperature_c, humidity_pct, solar_radiation, wind_speed, co2_ppm, barometric_pressure',
-          weatherRecords: 'CSV/JSON - rainfall_mm, temp_max, temp_min, wind_speed_kmh, storm_warning',
-          salesHistory:   'CSV/JSON - price_per_kg, volume_kg, channel, revenue',
+          envGeoData: 'CSV/JSON/Image — Environmental & Geospatial: latitude, longitude, soil_ph, soil_npk_nitrogen, soil_npk_phosphorus, soil_npk_potassium, organic_matter_pct, soil_type, water_type, water_temp_c, dissolved_oxygen, ammonia_nitrogen',
+          bioCropData: 'CSV/JSON/Image — Biological & Crop: crop_variety, strain, sowing_date, expected_harvest_date, image_filename, image_label (CV)',
+          operationsData: 'CSV/JSON — Farming Operations: date, input_type, input_amount, input_unit, irrigation_time, irrigation_volume_l, event_type, event_description',
+          financialData: 'CSV/JSON — Financial & Commercial: date, harvest_weight_kg, grade_a_pct, grade_b_pct, seed_cost, fertilizer_cost, labor_cost, equipment_cost, market_price_per_kg, channel, volume_kg, revenue',
         },
-        returns: 'AnalysisResult JSON - all fields computed by GLM AI',
+        returns: 'AnalysisResult JSON - all fields computed by Gemini AI',
+        imageNote: 'Images (.jpg/.jpeg/.png) in envGeoData and bioCropData are accepted. OCR/CV integration is mocked — see readFileOrImage() in route.ts for the integration point.',
       },
     },
     sampleCSV: {
-      plantGrowth:    'date,fertilizer_kg_ha,irrigation_mm,irrigation_frequency,labor_hours,soil_ph,soil_moisture,nitrogen_ppm,phosphorus_ppm,potassium_ppm\n2024-04-01,380,20,4,130,6.5,84,44,17,118',
-      envVars:        'date,temperature_c,humidity_pct,solar_radiation,wind_speed,co2_ppm,barometric_pressure\n2024-04-01,30.5,84,745,19,414,1009',
-      weatherRecords: 'date,rainfall_mm,temp_max,temp_min,wind_speed_kmh,storm_warning\n2024-04-01,8,33,25,18,false',
-      salesHistory:   'date,price_per_kg,volume_kg,channel,revenue\n2024-03-15,58,320,Singapore Export,18560',
+      envGeoData:    'date,latitude,longitude,soil_ph,soil_npk_nitrogen,soil_npk_phosphorus,soil_npk_potassium,organic_matter_pct,soil_type,water_type,water_temp_c,dissolved_oxygen,ammonia_nitrogen\n2024-04-01,3.1570,103.4542,6.5,42,18,120,8.4,peat,river,28.5,6.2,0.05',
+      bioCropData:   'date,crop_variety,strain,sowing_date,expected_harvest_date\n2024-04-01,Musang King,D197,2023-01-15,2024-07-30',
+      operationsData: 'date,input_type,input_amount,input_unit,irrigation_time,irrigation_volume_l,event_type,event_description\n2024-04-01,Fertilizer,25,kg,07:00,500,,\n2024-04-03,Pesticide,2,L,,,,\n2024-04-10,,,,06:30,480,Extreme Weather,Heavy rain 3 days',
+      financialData: 'date,harvest_weight_kg,grade_a_pct,grade_b_pct,fertilizer_cost,labor_cost,equipment_cost,market_price_per_kg,channel,volume_kg,revenue\n2024-03-15,1200,72,22,4800,1800,600,58,Singapore Export,320,18560',
     },
   });
 }

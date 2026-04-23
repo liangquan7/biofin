@@ -176,34 +176,43 @@ function HealthGauge({ value, size = 80 }: { value: number; size?: number }) {
 // ─── Upload Zone Sub-Component ────────────────────────────────────────────────
 
 function UploadZone({
-  id, icon, title, description, hint, accepted, file, onFile, dragOver, onDragOver, onDragLeave,
+  id, icon, title, description, hint, accepted, acceptLabel, files, onFiles, dragOver, onDragOver, onDragLeave,
 }: {
   id: string; icon: React.ReactNode; title: string; description: string;
-  hint: string; accepted: string; file: File | null;
-  onFile: (f: File | null) => void;
+  hint: string; accepted: string; acceptLabel?: string; files: File[];
+  onFiles: (files: File[]) => void;
   dragOver: boolean; onDragOver: () => void; onDragLeave: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const hasFiles = files.length > 0;
+
+  const mergeFiles = (incoming: FileList | null) => {
+    if (!incoming) return;
+    const existing = new Set(files.map(f => f.name + f.size));
+    const newOnes = Array.from(incoming).filter(f => !existing.has(f.name + f.size));
+    onFiles([...files, ...newOnes]);
+  };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     onDragLeave();
-    const f = e.dataTransfer.files[0];
-    if (f) onFile(f);
+    mergeFiles(e.dataTransfer.files);
+  };
+
+  const removeFile = (index: number) => {
+    onFiles(files.filter((_, i) => i !== index));
   };
 
   return (
     <div
-      onClick={() => !file && inputRef.current?.click()}
       onDragOver={e => { e.preventDefault(); onDragOver(); }}
       onDragLeave={onDragLeave}
       onDrop={handleDrop}
       style={{
-        border: `2px dashed ${dragOver ? '#059669' : file ? '#a7f3d0' : '#d1e8da'}`,
+        border: `2px dashed ${dragOver ? '#059669' : hasFiles ? '#a7f3d0' : '#d1e8da'}`,
         borderRadius: 18,
-        padding: '28px 24px',
-        background: dragOver ? 'rgba(5,150,105,0.04)' : file ? '#edfaf4' : '#fafcfb',
-        cursor: file ? 'default' : 'pointer',
+        padding: '22px 20px',
+        background: dragOver ? 'rgba(5,150,105,0.04)' : hasFiles ? '#edfaf4' : '#fafcfb',
         transition: 'all 0.22s ease',
         position: 'relative',
       }}
@@ -212,51 +221,80 @@ function UploadZone({
         ref={inputRef}
         type="file"
         accept={accepted}
+        multiple
         style={{ display: 'none' }}
-        onChange={e => { const f = e.target.files?.[0]; if (f) onFile(f); }}
+        onChange={e => { mergeFiles(e.target.files); e.target.value = ''; }}
       />
 
-      {file ? (
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
-          <div style={{ width: 42, height: 42, background: '#d1fae5', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            <CheckCircle2 size={20} color="#059669" />
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#065f46', marginBottom: 3 }}>{title}</div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <FileText size={13} color="#059669" />
-              <span style={{ fontSize: 12, color: '#059669', fontWeight: 600, fontFamily: "'JetBrains Mono',monospace" }}>{file.name}</span>
-              <span style={{ fontSize: 11, color: '#8aac98' }}>({(file.size / 1024).toFixed(1)} KB)</span>
-            </div>
-          </div>
-          <button
-            onClick={e => { e.stopPropagation(); onFile(null); }}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, borderRadius: 6, color: '#8aac98', display: 'flex', alignItems: 'center' }}
-          >
-            <X size={15} />
-          </button>
+      {/* ── Header row (always visible) ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: hasFiles ? 14 : 0 }}>
+        <div
+          style={{ width: 40, height: 40, background: hasFiles ? '#d1fae5' : '#e8f5ee', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}
+          onClick={() => !hasFiles && inputRef.current?.click()}
+        >
+          {hasFiles ? <CheckCircle2 size={19} color="#059669" /> : icon}
         </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: hasFiles ? '#065f46' : '#1a3a28', marginBottom: 2 }}>{title}</div>
+          <div style={{ fontSize: 11, color: '#6b8f7e' }}>{description}</div>
+        </div>
+        {/* File count badge */}
+        {hasFiles && (
+          <div style={{ background: '#059669', color: '#fff', fontSize: 11, fontWeight: 800, borderRadius: 20, padding: '3px 10px', flexShrink: 0 }}>
+            {files.length} {files.length === 1 ? 'file' : 'files'}
+          </div>
+        )}
+      </div>
+
+      {/* ── File list ── */}
+      {hasFiles && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+          {files.map((file, i) => (
+            <div key={`${file.name}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#fff', border: '1px solid #d1fae5', borderRadius: 9, padding: '7px 10px' }}>
+              <FileText size={12} color="#059669" style={{ flexShrink: 0 }} />
+              <span style={{ flex: 1, fontSize: 11.5, color: '#065f46', fontWeight: 600, fontFamily: "'JetBrains Mono',monospace", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>
+                {file.name}
+              </span>
+              <span style={{ fontSize: 10.5, color: '#8aac98', flexShrink: 0 }}>({(file.size / 1024).toFixed(1)} KB)</span>
+              <button
+                onClick={e => { e.stopPropagation(); removeFile(i); }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', borderRadius: 5, color: '#8aac98', display: 'flex', alignItems: 'center', flexShrink: 0 }}
+              >
+                <X size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── Add more / upload prompt ── */}
+      {hasFiles ? (
+        <button
+          onClick={() => inputRef.current?.click()}
+          style={{ width: '100%', background: 'none', border: '1.5px dashed #a7f3d0', borderRadius: 10, padding: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, color: '#059669', fontSize: 12, fontWeight: 700, fontFamily: "'Sora',sans-serif", transition: 'background 0.18s' }}
+          onMouseEnter={e => (e.currentTarget.style.background = 'rgba(5,150,105,0.05)')}
+          onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+        >
+          <Upload size={13} />
+          Add more files
+        </button>
       ) : (
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14 }}>
-            <div style={{ width: 42, height: 42, background: '#e8f5ee', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-              {icon}
+        <>
+          <div
+            onClick={() => inputRef.current?.click()}
+            style={{ cursor: 'pointer' }}
+          >
+            <div style={{ background: '#f0f9f4', border: '1px solid #d1e8da', borderRadius: 10, padding: '10px 14px', marginBottom: 14 }}>
+              <div style={{ fontSize: 10, fontWeight: 700, color: '#8aac98', letterSpacing: '0.12em', textTransform: 'uppercase' as const, marginBottom: 5 }}>Expected Data Points</div>
+              <div style={{ fontSize: 11, color: '#4d7a62', fontFamily: "'JetBrains Mono',monospace", lineHeight: 1.8 }}>{hint}</div>
             </div>
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: '#1a3a28', marginBottom: 2 }}>{title}</div>
-              <div style={{ fontSize: 12, color: '#6b8f7e' }}>{description}</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: '#8aac98' }}>
+              <Upload size={14} />
+              <span style={{ fontSize: 12, fontWeight: 600 }}>Click to upload or drag & drop</span>
+              <span style={{ fontSize: 11, background: '#e4ede8', borderRadius: 6, padding: '2px 8px' }}>{acceptLabel ?? 'CSV / JSON'}</span>
             </div>
           </div>
-          <div style={{ background: '#f0f9f4', border: '1px solid #d1e8da', borderRadius: 10, padding: '10px 14px', marginBottom: 14 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: '#8aac98', letterSpacing: '0.12em', textTransform: 'uppercase' as const, marginBottom: 5 }}>Expected Columns</div>
-            <div style={{ fontSize: 11, color: '#4d7a62', fontFamily: "'JetBrains Mono',monospace", lineHeight: 1.8 }}>{hint}</div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: '#8aac98' }}>
-            <Upload size={14} />
-            <span style={{ fontSize: 12, fontWeight: 600 }}>Click to upload or drag & drop</span>
-            <span style={{ fontSize: 11, background: '#e4ede8', borderRadius: 6, padding: '2px 8px' }}>CSV / JSON</span>
-          </div>
-        </div>
+        </>
       )}
     </div>
   );
@@ -274,11 +312,10 @@ export default function BioFinOracle() {
   const [apiError, setApiError] = useState<string | null>(null);
 
   // ── File upload state ────────────────────────────────────────────────────────
-  const [plantFile,   setPlantFile]   = useState<File | null>(null);
-  const [envFile,     setEnvFile]     = useState<File | null>(null);
-  const [weatherFile, setWeatherFile] = useState<File | null>(null);
-  // FIX #9: 4th upload slot for sales/pricing history
-  const [salesFile,   setSalesFile]   = useState<File | null>(null);
+  const [envGeoFiles,    setEnvGeoFiles]    = useState<File[]>([]);  // Cat 1: Environmental & Geospatial
+  const [bioCropFiles,   setBioCropFiles]   = useState<File[]>([]);  // Cat 2: Biological & Crop
+  const [operationsFiles, setOperationsFiles] = useState<File[]>([]); // Cat 3: Farming Operations
+  const [financialFiles,  setFinancialFiles]  = useState<File[]>([]); // Cat 4: Financial & Commercial
   const [dragOver,    setDragOver]    = useState<string | null>(null);
 
   // ── Dashboard state ──────────────────────────────────────────────────────────
@@ -340,10 +377,11 @@ export default function BioFinOracle() {
 
     try {
       const fd = new FormData();
-      if (plantFile)   fd.append('plantGrowth',    plantFile);
-      if (envFile)     fd.append('envVars',         envFile);
-      if (weatherFile) fd.append('weatherRecords',  weatherFile);
-      if (salesFile)   fd.append('salesHistory',    salesFile);
+      // Append all files for each category under the same key (getAll on the server)
+      envGeoFiles.forEach(f    => fd.append('envGeoData',     f));
+      bioCropFiles.forEach(f   => fd.append('bioCropData',    f));
+      operationsFiles.forEach(f => fd.append('operationsData', f));
+      financialFiles.forEach(f  => fd.append('financialData',  f));
 
       const res  = await fetch('/api/analyze', { method: 'POST', body: fd });
       const data: AnalysisResult = await res.json();
@@ -358,18 +396,16 @@ export default function BioFinOracle() {
       if (data.weatherRisk) setWeatherEvent2(data.weatherRisk);
 
     } catch (err) {
-      // Defect 5 fix: stop here — do NOT push to dashboard with null analysisResult
       setApiError(String(err));
       setIsProcessing(false);
       return;
     }
 
-    // Only reached when the API call succeeded and state has been populated
     setProcessingStep(5);
     await new Promise(r => setTimeout(r, 400));
     setIsProcessing(false);
     setCurrentPage('dashboard');
-  }, [plantFile, envFile, weatherFile, salesFile]);
+  }, [envGeoFiles, bioCropFiles, operationsFiles, financialFiles]);
 
   // ── Derived computed values ──────────────────────────────────────────────────
   // Defect 1 fix: anchor ALL derived metrics to the AI's computed base values.
@@ -624,11 +660,11 @@ export default function BioFinOracle() {
                 <span style={{ color: '#34d399' }}>to Activate AI Analysis</span>
               </h1>
               <p style={{ fontSize: 15, color: '#a1c4a1', lineHeight: 1.7, maxWidth: 580, marginBottom: 28 }}>
-                Import your plant growth records, environmental sensor data, historical weather logs, and sales pricing history. BioFin Oracle will analyse every data point and generate a full farm intelligence report.
+                Import your environmental &amp; geospatial data, biological crop records, farming operations logs, and financial &amp; commercial history. BioFin Oracle will analyse every data point and generate a full farm intelligence report. Categories 1 &amp; 2 also accept images for OCR &amp; Computer Vision analysis.
               </p>
               <div style={{ display: 'flex', gap: 32 }}>
                 {[
-                  { label: 'Data types supported', val: 'CSV & JSON' },
+                  { label: 'Data types supported', val: 'CSV, JSON & Image' },
                   { label: 'Analysis dimensions',  val: '14+' },
                   { label: 'AI agents deployed',   val: '4' },
                   { label: 'File slots',            val: '4' },
@@ -645,59 +681,68 @@ export default function BioFinOracle() {
           {/* ── Upload Body ── */}
           <div style={{ flex: 1, padding: '40px', maxWidth: 1060, margin: '0 auto', width: '100%' }}>
 
-            {/* FIX #9: 4-slot 2x2 grid (was 3-column) */}
+            {/* 4-slot 2x2 grid — four new data ingestion categories */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20, marginBottom: 32 }}>
+
+              {/* ── Category 1: Environmental & Geospatial (CSV / JSON / Image) ── */}
               <UploadZone
-                id="plantGrowth"
-                icon={<Sprout size={20} color="#059669" />}
-                title="Plant Growth Conditions"
-                description="Fertilizer, irrigation, labor, soil metrics per date"
-                hint={`date\nfertilizer_kg_ha\nirrigation_mm\nirrigation_frequency\nlabor_hours\nsoil_ph\nsoil_moisture\nnitrogen_ppm\nphosphorus_ppm\npotassium_ppm`}
-                accepted=".csv,.json"
-                file={plantFile}
-                onFile={setPlantFile}
-                dragOver={dragOver === 'plant'}
-                onDragOver={() => setDragOver('plant')}
+                id="envGeoData"
+                icon={<Globe size={20} color="#059669" />}
+                title="Environmental & Geospatial Data"
+                description="GPS boundaries, soil tests, water source status"
+                hint={`latitude / longitude / polygon_boundary\nsoil_ph · soil_npk_nitrogen · soil_npk_phosphorus\nsoil_npk_potassium · organic_matter_pct · soil_type\nwater_type · water_temp_c · dissolved_oxygen\nammonia_nitrogen`}
+                accepted=".csv,.json,.jpg,.jpeg,.png"
+                acceptLabel="CSV / JSON / Image"
+                files={envGeoFiles}
+                onFiles={setEnvGeoFiles}
+                dragOver={dragOver === 'envGeo'}
+                onDragOver={() => setDragOver('envGeo')}
                 onDragLeave={() => setDragOver(null)}
               />
+
+              {/* ── Category 2: Biological & Crop (CSV / JSON / Image) ── */}
               <UploadZone
-                id="envVars"
-                icon={<Thermometer size={20} color="#3b82f6" />}
-                title="Environment Variables"
-                description="Temperature, humidity, solar, CO₂ readings"
-                hint={`date\ntemperature_c\nhumidity_pct\nsolar_radiation\nwind_speed\nco2_ppm\nbarometric_pressure`}
-                accepted=".csv,.json"
-                file={envFile}
-                onFile={setEnvFile}
-                dragOver={dragOver === 'env'}
-                onDragOver={() => setDragOver('env')}
+                id="bioCropData"
+                icon={<Sprout size={20} color="#3b82f6" />}
+                title="Biological & Crop Data"
+                description="Variety, growth milestones, field image data (CV)"
+                hint={`crop_variety · strain\nsowing_date · expected_harvest_date\nimage_filename · image_label (CV output)\n— or upload leaf / fruit photos directly —\n.jpg / .png accepted for Computer Vision`}
+                accepted=".csv,.json,.jpg,.jpeg,.png"
+                acceptLabel="CSV / JSON / Image"
+                files={bioCropFiles}
+                onFiles={setBioCropFiles}
+                dragOver={dragOver === 'bioCrop'}
+                onDragOver={() => setDragOver('bioCrop')}
                 onDragLeave={() => setDragOver(null)}
               />
+
+              {/* ── Category 3: Farming Operations (CSV / JSON) ── */}
               <UploadZone
-                id="weatherRecords"
-                icon={<CloudRain size={20} color="#7c3aed" />}
-                title="Weather Records"
-                description="Rainfall, temperature range, wind, storm flags"
-                hint={`date\nrainfall_mm\ntemp_max\ntemp_min\nwind_speed_kmh\nstorm_warning`}
+                id="operationsData"
+                icon={<Activity size={20} color="#7c3aed" />}
+                title="Farming Operations Data"
+                description="Input logs, irrigation records, special events"
+                hint={`date · input_type · input_amount · input_unit\nirrigation_time · irrigation_volume_l\nevent_type · event_description\n(fertilizer / pesticide / herbicide / feed / pruning\n extreme weather / equipment failure)`}
                 accepted=".csv,.json"
-                file={weatherFile}
-                onFile={setWeatherFile}
-                dragOver={dragOver === 'weather'}
-                onDragOver={() => setDragOver('weather')}
+                files={operationsFiles}
+                onFiles={setOperationsFiles}
+                dragOver={dragOver === 'operations'}
+                onDragOver={() => setDragOver('operations')}
                 onDragLeave={() => setDragOver(null)}
               />
-              {/* FIX #9: New sales history upload zone */}
+
+              {/* ── Category 4: Financial & Commercial (CSV / JSON) ── */}
               <UploadZone
-                id="salesHistory"
-                icon={<TrendingUp size={20} color="#d97706" />}
-                title="Sales & Pricing History"
-                description="Historical price per kg, volume, and channel data"
-                hint={`date\nprice_per_kg\nvolume_kg\nchannel\nrevenue`}
+                id="financialData"
+                icon={<DollarSign size={20} color="#d97706" />}
+                title="Financial & Commercial Data"
+                description="Yield data, cost breakdown, market sales prices"
+                hint={`date · harvest_weight_kg · grade_a_pct · grade_b_pct\nfertilizer_cost · labor_cost · equipment_cost\nseed_cost · market_price_per_kg\nchannel · volume_kg · revenue`}
                 accepted=".csv,.json"
-                file={salesFile}
-                onFile={setSalesFile}
-                dragOver={dragOver === 'sales'}
-                onDragOver={() => setDragOver('sales')}
+                files={financialFiles}
+                onFiles={setFinancialFiles}
+                dragOver={dragOver === 'financial'}
+                onDragOver={() => setDragOver('financial')}
                 onDragLeave={() => setDragOver(null)}
               />
             </div>
@@ -710,15 +755,15 @@ export default function BioFinOracle() {
               <div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: '#1a3a28', marginBottom: 5 }}>All files are optional — but more data means better insights</div>
                 <p style={{ fontSize: 12.5, color: '#6b8f7e', lineHeight: 1.6, margin: 0 }}>
-                  You can proceed with zero, one, or all four files. BioFin Oracle will use sensible defaults for missing data and clearly indicate which metrics are estimated vs data-driven. The new <strong style={{ color: '#d97706' }}>Sales History</strong> file unlocks price volatility analysis and market arbitrage recommendations.
+                  You can proceed with zero, one, or all four files. BioFin Oracle will use sensible defaults for missing data and clearly indicate which metrics are estimated vs data-driven. Categories 1 &amp; 2 also accept <strong style={{ color: '#3b82f6' }}>images</strong> (.jpg/.png) for OCR soil report extraction and Computer Vision field analysis. The <strong style={{ color: '#d97706' }}>Financial Data</strong> file unlocks price volatility analysis and market arbitrage recommendations.
                 </p>
               </div>
               <div style={{ flexShrink: 0, background: '#f6faf8', border: '1px solid #e4ede8', borderRadius: 12, padding: '8px 16px', textAlign: 'center' }}>
                 <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 22, fontWeight: 800, color: '#059669' }}>
-                  {[plantFile, envFile, weatherFile, salesFile].filter(Boolean).length}
-                  <span style={{ fontSize: 13, color: '#8aac98', marginLeft: 2 }}>/4</span>
+                  {envGeoFiles.length + bioCropFiles.length + operationsFiles.length + financialFiles.length}
+                  <span style={{ fontSize: 13, color: '#8aac98', marginLeft: 2 }}>files</span>
                 </div>
-                <div style={{ fontSize: 10, color: '#8aac98', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' as const, marginTop: 2 }}>Files ready</div>
+                <div style={{ fontSize: 10, color: '#8aac98', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' as const, marginTop: 2 }}>Ready</div>
               </div>
             </div>
 
