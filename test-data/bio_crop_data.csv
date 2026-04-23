@@ -1,0 +1,13 @@
+date,crop_variety,sowing_date,expected_harvest_date,image_filename,image_label,image_confidence
+2024-01-15,Musang King (D197),2023-01-15,2024-07-30,leaf_jan.jpg,healthy_green,92
+2024-02-20,Musang King (D197),2023-01-15,2024-07-30,leaf_feb.jpg,leaf_yellowing,78
+2024-03-10,Musang King (D197),2023-01-15,2024-07-30,leaf_mar.jpg,leaf_yellowing,85
+2024-04-05,Musang King (D197),2023-01-15,2024-07-30,canopy_apr.jpg,healthy_green,88
+2024-05-12,Musang King (D197),2023-01-15,2024-07-30,trunk_may.jpg,fruit_set_early,91
+2024-06-18,Musang King (D197),2023-01-15,2024-07-30,fruit_jun.jpg,fruit_development,94
+2024-07-25,Musang King (D197),2023-01-15,2024-07-30,fruit_jul.jpg,fruit_maturity,89
+2024-08-08,Musang King (D197),2023-01-15,2024-07-30,leaf_aug.jpg,leaf_spot_disease,72
+2024-09-15,Musang King (D197),2023-01-15,2024-07-30,post_harvest_sep.jpg,post_harvest_stress,65
+2024-10-22,Musang King (D197),2023-01-15,2024-07-30,canopy_oct.jpg,healthy_green,90
+2024-11-10,Musang King (D197),2023-01-15,2024-07-30,leaf_nov.jpg,leaf_yellowing,76
+2024-12-01,Musang King (D197),2023-01-15,2024-07-30,canopy_dec.jpg,dormant_phase,82

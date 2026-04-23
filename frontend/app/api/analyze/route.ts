@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-
+export const maxDuration = 300;
 // --- API Config ---------------------------------------------------------------
 // Keys are loaded from environment variables — never hardcode secrets in source.
 // Create a .env.local file (gitignored) with the variables below.
 // See .env.local.example in the project root for the required variable names.
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? '';
-const GEMINI_MODEL   = process.env.GEMINI_MODEL   ?? 'gemini-1.5-flash';
+const ZAI_API_KEY = process.env.ZAI_API_KEY ?? '';
+const ZAI_MODEL   = process.env.ZAI_MODEL   ?? 'ilmu-glm-5.1';
+const ZAI_BASE_URL = process.env.ZAI_BASE_URL ?? 'https://api.ilmu.ai/v1/chat/completions';
 
 const TAVILY_URL    = 'https://api.tavily.com/search';
 const TAVILY_KEY    = process.env.TAVILY_API_KEY ?? '';
@@ -471,7 +472,6 @@ async function fetchMarketIntelligence(
 
   return searches;
 }
-
 // --- Format market intel for prompt injection ---------------------------------
 
 function formatMarketIntel(intel: { query: string; results: TavilyResult[] }[]): string {
@@ -490,7 +490,7 @@ function formatMarketIntel(intel: { query: string; results: TavilyResult[] }[]):
     .join('\n\n');
 }
 
-// --- Default safe values (used as fallback if Gemini fails) ---------------------
+// --- Default safe values (used as fallback if ZAI fails) ---------------------
 
 function buildDefaultResult(
   envGeoRows:    Record<string, string>[],
@@ -577,12 +577,79 @@ function buildDefaultResult(
 
 // --- Strip markdown fences from LLM output -----------------------------------
 
-function stripMarkdownJSON(text: string): string {
-  return text
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```\s*$/, '')
-    .trim();
+/**
+ * Robustly extracts and repairs a JSON object from raw LLM output.
+ * Handles the full range of common model mistakes:
+ *   - Markdown fences (```json ... ```)
+ *   - Prose before/after the JSON object
+ *   - Trailing commas before } or ]
+ *   - Single-quoted strings and property names
+ *   - Python literals: None → null, True → true, False → false
+ *   - Smart / curly quotes: " " ' '
+ *   - JS-style // line comments inside JSON
+ *   - Unescaped literal newlines inside string values
+ *   - Truncated output — auto-closes unclosed brackets/braces
+ */
+function repairLLMJson(raw: string): string {
+  let t = raw;
+
+  // Step 1: strip all markdown code fences
+  t = t.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '');
+
+  // Step 2: isolate outermost { … }
+  const s = t.indexOf('{');
+  const e = t.lastIndexOf('}');
+  if (s !== -1 && e > s) t = t.slice(s, e + 1);
+  else if (s !== -1)      t = t.slice(s);   // truncated — no closing brace yet
+
+  // Step 3: replace smart / curly quotes with straight quotes
+  t = t
+    .replace(/[\u201C\u201D]/g, '"')   // " "
+    .replace(/[\u2018\u2019]/g, "'");  // ' '
+
+  // Step 4: Python literals
+  t = t
+    .replace(/:\s*None\b/g,  ': null')
+    .replace(/:\s*True\b/g,  ': true')
+    .replace(/:\s*False\b/g, ': false');
+
+  // Step 5: remove JS // comments
+  t = t.replace(/\/\/[^\n\r]*/g, '');
+
+  // Step 6: trailing commas before } or ]  (run 4× for deep nesting)
+  for (let i = 0; i < 4; i++) t = t.replace(/,\s*([}\]])/g, '$1');
+
+  // Step 7: unescaped literal newlines / tabs inside string values
+  // Replace raw CR/LF/tab that appear between two quote-delimited segments
+  t = t.replace(/"([^"\\]*)"/g, (_match, inner: string) => {
+    const fixed = inner
+      .replace(/\n/g, '\\n')
+      .replace(/\r/g, '\\r')
+      .replace(/\t/g, '\\t');
+    return `"${fixed}"`;
+  });
+
+  // Step 8: close any unclosed brackets / braces (truncated output)
+  const stack: string[] = [];
+  let inStr = false;
+  let esc   = false;
+  for (const ch of t) {
+    if (esc)              { esc = false; continue; }
+    if (ch === '\\')    { esc = true;  continue; }
+    if (ch === '"')       { inStr = !inStr; continue; }
+    if (inStr)            continue;
+    if (ch === '{')       stack.push('}');
+    else if (ch === '[')  stack.push(']');
+    else if (ch === '}' || ch === ']') stack.pop();
+  }
+  // Append missing closing tokens in reverse order
+  t = t + stack.reverse().join('');
+
+  return t.trim();
 }
+
+// Keep old name as alias so call-sites don't change
+const stripMarkdownJSON = repairLLMJson;
 
 // --- Validate and repair the LLM JSON before returning it --------------------
 
@@ -708,7 +775,7 @@ function sanitiseResult(raw: any, defaults: AnalysisResult): AnalysisResult {
   };
 }
 
-// --- Build the Gemini prompt -----------------------------------------------------
+// --- Build the ZAI prompt -----------------------------------------------------
 
 function buildSystemPrompt(): string {
   return `You are BioFin Oracle AI - an expert agricultural intelligence engine specializing in Malaysian durian farming, financial analysis, and smart agriculture decision-making.
@@ -743,7 +810,14 @@ You will receive structured farm data summaries and optional live market intelli
 - If total monthly cost (fertCost + laborCost) > 15000: cashRunway = 92
 
 ## CRITICAL OUTPUT RULE:
-You MUST output ONLY a raw JSON object. No markdown. No explanation. No \`\`\`json fences. No preamble. The very first character of your response must be { and the very last must be }.
+You MUST output ONLY a raw JSON object. Absolutely no markdown. No \`\`\`json fences. No explanation. No preamble. No trailing text.
+- The VERY FIRST character of your entire response MUST be {
+- The VERY LAST character of your entire response MUST be }
+- Every string value must use double quotes. Never use single quotes.
+- No trailing commas after the last item in any array or object.
+- No JavaScript comments (// or /* */) inside the JSON.
+- All special characters inside string values must be properly escaped (\n \t \").
+FAILURE TO FOLLOW THIS RULE WILL BREAK THE SYSTEM. Output { immediately.
 
 The JSON must exactly match this TypeScript interface:
 {
@@ -891,64 +965,54 @@ Now perform your complete analysis and output the JSON object ONLY. No text befo
   return sections.join('\n');
 }
 
-// --- Call Gemini API ----------------------------------------------------------
+// --- Call ZAI (ilmu.ai) API ---------------------------------------------------
 
-const GEMINI_FALLBACK_MODELS = ['gemini-1.5-flash', 'gemini-1.5-pro'];
-
-async function callGemini(systemPrompt: string, userPrompt: string): Promise<string> {
-  const modelsToTry = [GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS.filter(m => m !== GEMINI_MODEL)];
-
+async function callZAI(systemPrompt: string, userPrompt: string): Promise<string> {
   let lastError = '';
-  for (const model of modelsToTry) {
-    try {
-      // Use Google's OpenAI-compatible endpoint — broader auth support
-      const url = `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`;
 
-      const res = await fetch(url, {
-        method:  'POST',
-        headers: {
-          'Content-Type':  'application/json',
-          'Authorization': `Bearer ${GEMINI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model,
-          temperature:  0.2,
-          max_tokens:   4096,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user',   content: userPrompt   },
-          ],
-        }),
-      });
+  try {
+    const res = await fetch(ZAI_BASE_URL, {
+      method:  'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': `Bearer ${ZAI_API_KEY}`,
+        
+      },
+      body: JSON.stringify({
+        model:       ZAI_MODEL,
+        temperature: 0.2,
+        max_tokens:  4096,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user',   content: userPrompt   },
+        ],
+      }),
+    });
 
-      const responseText = await res.text();
+    const responseText = await res.text();
 
-      if (!res.ok) {
-        lastError = `Gemini API error ${res.status} (model: ${model}): ${responseText.slice(0, 300)}`;
-        console.warn(`[BioFin] ${lastError} — trying next model…`);
-        continue;
-      }
-
-      const data = JSON.parse(responseText) as any;
-      const content = data?.choices?.[0]?.message?.content;
-      if (typeof content !== 'string' || !content.trim()) {
-        lastError = `Gemini returned empty content (model: ${model})`;
-        console.warn(`[BioFin] ${lastError} — trying next model…`);
-        continue;
-      }
-
-      if (model !== GEMINI_MODEL) {
-        console.log(`[BioFin] Used fallback model: ${model}`);
-      }
-      return content;
-
-    } catch (err) {
-      lastError = String(err);
-      console.warn(`[BioFin] Gemini fetch error (model: ${model}):`, err);
+    if (!res.ok) {
+      lastError = `ZAI API error ${res.status} (model: ${ZAI_MODEL}): ${responseText.slice(0, 300)}`;
+      console.warn(`[BioFin] ${lastError}`);
+      throw new Error(lastError);
     }
-  }
 
-  throw new Error(lastError || 'All Gemini models failed');
+    const data = JSON.parse(responseText) as any;
+    const content = data?.choices?.[0]?.message?.content;
+
+    if (typeof content !== 'string' || !content.trim()) {
+      lastError = `ZAI returned empty content (model: ${ZAI_MODEL})`;
+      console.warn(`[BioFin] ${lastError}`);
+      throw new Error(lastError);
+    }
+
+    return content;
+
+  } catch (err) {
+    lastError = String(err);
+    console.warn(`[BioFin] ZAI fetch error (model: ${ZAI_MODEL}):`, err);
+    throw new Error(lastError || 'ZAI API call failed');
+  }
 }
 
 // --- POST Handler -------------------------------------------------------------
@@ -1021,7 +1085,7 @@ export async function POST(request: NextRequest) {
     intelText = 'Live market search unavailable - proceeding with local analysis only.';
   }
 
-  // -- 4. Call Gemini AI --------------------------------------------------------
+  // -- 4. Call ZAI --------------------------------------------------------
   try {
     const systemPrompt = buildSystemPrompt();
     const userPrompt   = buildUserPrompt(envGeo, bioCrop, operations, financial, intelText, {
@@ -1032,20 +1096,17 @@ export async function POST(request: NextRequest) {
       files:      filesUploaded,
     });
 
-    const rawLLMOutput = await callGemini(systemPrompt, userPrompt);
+    const rawLLMOutput = await callZAI(systemPrompt, userPrompt);
     const cleanedJSON  = stripMarkdownJSON(rawLLMOutput);
 
     let parsed: any;
     try {
       parsed = JSON.parse(cleanedJSON);
-    } catch {
-      const start = cleanedJSON.indexOf('{');
-      const end   = cleanedJSON.lastIndexOf('}');
-      if (start !== -1 && end > start) {
-        parsed = JSON.parse(cleanedJSON.slice(start, end + 1));
-      } else {
-        throw new Error('Could not extract valid JSON from LLM response');
-      }
+    } catch (firstErr) {
+      // repairLLMJson already did heavy lifting; log raw output for debugging
+      console.error('[BioFin] JSON parse failed. Raw LLM output (first 600 chars):', rawLLMOutput.slice(0, 600));
+      console.error('[BioFin] Cleaned JSON (first 600 chars):', cleanedJSON.slice(0, 600));
+      throw new Error(`JSON parse error: ${(firstErr as Error).message}`);
     }
 
     const result = sanitiseResult(parsed, defaults);
@@ -1077,18 +1138,18 @@ export async function POST(request: NextRequest) {
 export async function GET() {
   return NextResponse.json({
     status:  'ok',
-    service: 'BioFin Oracle Analysis API - AI Edition',
+    service: 'BioFin Oracle Analysis API - ZAI Edition',
     version: '4.0.0',
     pipeline: {
       step1: 'Parse uploaded CSV/JSON/Image files (envGeo, bioCrop, operations, financial)',
       step2: 'Summarise data into compact statistics for LLM context (images → mock OCR/CV payload)',
       step3: 'Tavily live web search: market prices, competitors, by-product channels (triggered by financial/operations signals)',
-      step4: 'Gemini API call (gemini-2.0-flash): full AI analysis -> strict JSON output',
+      step4: 'ZAI (ilmu-glm) API call: full AI analysis -> strict JSON output',
       step5: 'Sanitise + validate JSON -> return AnalysisResult to frontend',
-      fallback: 'If Gemini fails, return safe default values with error note in recommendation',
+      fallback: 'If ZAI fails, return safe default values with error note in recommendation',
     },
     models: {
-      llm:    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+      llm:    `${ZAI_BASE_URL} (model: ${ZAI_MODEL})`,
       search: TAVILY_URL,
     },
     endpoints: {
@@ -1100,7 +1161,7 @@ export async function GET() {
           operationsData: 'CSV/JSON — Farming Operations: date, input_type, input_amount, input_unit, irrigation_time, irrigation_volume_l, event_type, event_description',
           financialData: 'CSV/JSON — Financial & Commercial: date, harvest_weight_kg, grade_a_pct, grade_b_pct, seed_cost, fertilizer_cost, labor_cost, equipment_cost, market_price_per_kg, channel, volume_kg, revenue',
         },
-        returns: 'AnalysisResult JSON - all fields computed by Gemini AI',
+        returns: 'AnalysisResult JSON - all fields computed by ZAI AI',
         imageNote: 'Images (.jpg/.jpeg/.png) in envGeoData and bioCropData are accepted. OCR/CV integration is mocked — see readFileOrImage() in route.ts for the integration point.',
       },
     },
