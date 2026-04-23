@@ -50,10 +50,6 @@ Malaysian high-value agriculture is paralyzed by the "Triple Volatility" crisis:
 
 ## Setup
 
-```
-```text?code_stdout&code_event_index=2
-README-v3.md generated successfully.
-
 ```bash
 # Clone the repo
 git clone [https://github.com/your-org/biofin-oracle.git](https://github.com/your-org/biofin-oracle.git)
