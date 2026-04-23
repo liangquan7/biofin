@@ -105,7 +105,7 @@ interface AnalysisResult {
   compliance: { label: string; status: 'ok' | 'warn' | 'error'; detail: string }[];
   recommendation: string;
   // Tavily live search results passed through so the frontend can render real news
-  marketNews?: { query: string; title: string; snippet: string; url: string }[];
+  marketNews: { query: string; title: string; snippet: string; url: string }[];
   summary: {
     totalDataPoints: number; plantGrowthRecords: number;
     envRecords: number; weatherRecords: number; salesRecords: number;
