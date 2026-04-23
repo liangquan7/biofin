@@ -1,64 +1,120 @@
-# BioFin Oracle Prototype - Product Requirements Document 
+```python?code_reference&code_event_index=2
+markdown_content = """# BioFin Oracle
 
-**Document Version:** 0.1.0 (Prototype Baseline)
-**Project Status:** Active Hackathon Development (UM Hackathon 2026)
-**Architecture:** Next.js Monolith (Serverless API Route Backend)
-**Primary Technology:** Next.js (TypeScript), React, Chart.js
+**The Z.AI Decision Brain for Malaysian Agri-Fintech.** Moving SME orchard owners from weather-dependent gambles to data-driven operational management.
 
----
+Built for **UM Hackathon 2026** — Domain 2: AI for Economic Empowerment & Decision Intelligence.
 
-## 1. Project Overview
-The BioFin Oracle is a web-based prototype designed to visualize agricultural, environmental, and financial data for SME orchard owners. 
+## The Idea
+Malaysian high-value agriculture is paralyzed by the "Triple Volatility" crisis: biological waste, extreme meteorological shifts, and market information asymmetry. Existing tools provide passive dashboards that require manual interpretation—a fatal flaw when reacting to sudden environmental shifts.
 
-Unlike the initial theoretical design, this system operates entirely within a Next.js environment. The backend logic is isolated to a single serverless function (`app/api/analyze/route.ts`). The core processing engine currently relies on static arithmetic aggregation and hardcoded heuristic triggers to generate recommendations, with a placeholder infrastructure for future Large Language Model (GLM) integration.
+**BioFin Oracle** operates as an active intelligence engine. It ingests unstructured market news and structured farm telemetry to generate explainable, quantifiable action plans. It outputs direct operational directives (e.g., altering harvest dates) rather than just visualizing data.
 
-## 2. System Architecture
+## How It Works
+* **Data Ingestion** — Users upload up to four static CSV/JSON datasets (Plant Growth, Environmental Variables, Weather Records, Sales History).
+* **Pre-Aggregation** — The Next.js backend mathematically compresses the raw arrays into statistical summaries and trend signals to prevent LLM context window collapse.
+* **AI Reasoning** — The aggregated payload is transmitted to the Z.AI GLM API (`nemo-super`), forcing a deterministic JSON response conforming to a strict TypeScript interface.
+* **Execution Ledger** — The React frontend renders the "Agentic Decision Ledger," displaying the explicit operational command alongside the AI's causal reasoning chain.
+* **Simulation** — Users manipulate frontend sliders (e.g., fertilizer load, labor hours) to instantly recalculate projected profit margins via client-side logic.
 
-The system abandons distributed processing (Django/Celery) in favor of a synchronous Next.js pipeline.
+## Screens
 
-* **Frontend (`page.tsx`):** A client-side React dashboard that captures user-uploaded CSV/JSON files, sends them via `FormData` to the internal API, and renders the returned JSON payload into static charts and interactive sliders.
-* **Backend (`route.ts`):** A Next.js App Router POST endpoint. It acts as the data ingestion, parsing, aggregation, and decision-routing layer.
-* **Data Storage:** None. The system is entirely ephemeral. Data is processed in-memory during the HTTP request and discarded.
+| Screen | What it does |
+| :--- | :--- |
+| **Command Center** | Displays the Agentic Decision Ledger, immediate biological/soil health metrics, and a 7-day micro-climate forecast. |
+| **Simulation Sandbox** | Digital Twin interface. Sliders for input variables (Nitrogen, Labor) dynamically updating expected net profit graphs. |
+| **Global Operations** | Triggers manual stress tests (e.g., logistics disruption) and displays automated hedging strategies. |
+| **SME Compliance** | Audits uploaded data against LHDN e-invoicing Phase 3 rules and calculates system ROI. |
 
-## 3. Core Functionalities & Processing Pipeline
+## Tech Stack
 
-The backend must execute the following sequential pipeline within `route.ts`.
+| Layer | Technology |
+| :--- | :--- |
+| UI Framework | Next.js (React), Tailwind CSS |
+| Visualization | Chart.js |
+| API Routing | Next.js App Router (`app/api/analyze/route.ts`) |
+| AI Engine | Z.AI GLM API (`nemo-super`) |
+| Web Search | Tavily Search API |
 
-### 3.1 Data Ingestion & Parsing
-* **Input:** Receives `multipart/form-data` containing up to four optional files: `plantGrowth`, `envVars`, `weatherRecords`, and `salesHistory`.
-* **Parsing:** Executes `parseCSV` or `tryParseJSON` to convert raw text into arrays of typed interfaces (`PlantRecord`, `EnvRecord`, `WeatherRecord`, `SalesRecord`).
+## AI Integration
 
-### 3.2 Aggregation Engine
-The backend performs arithmetic synthesis on the parsed arrays.
-* **Plant Metrics:** Calculates average `fertilizer_kg_ha`, `irrigation_mm`, `soil_ph`, and NPK ppm. Computes a static `bioFertReduction` percentage based on deviation from a hardcoded 400kg/ha baseline.
-* **Environmental Metrics:** Averages temperature, humidity, solar radiation, and wind speed.
-* **Weather Metrics:** Calculates max wind speed, average rainfall, and counts `storm_warning` boolean flags.
-* **Sales Metrics:** Averages `volume_kg` and `price_per_kg`.
+**Z.AI GLM API (Synchronous Inference):**
+* Context-aware reasoning of agricultural telemetry.
+* Generation of strict JSON decision matrices.
+* Translation of raw numbers into human-readable causal logic.
 
-### 3.3 Heuristic Evaluation (The Fallback Logic)
-Before any LLM integration is executed, the backend evaluates the aggregated data against hardcoded logical thresholds.
-* **Weather Risk:** * If storm warnings > 2 or rainfall > 50mm → Assign `rain` risk.
-  * If max temp > 35°C and rainfall < 5mm → Assign `drought` risk.
-  * If max wind > 24km/h → Assign `wind` risk.
-* **Market Risk:** * If `avgVolume` > 1000kg → Trigger `isOversupplied` boolean.
-  * If `avgPrice` < RM 40 → Trigger `isPriceDropping` boolean.
-* **Fallback Execution:** If the GLM API is unavailable or bypassed, the system executes `buildDefaultResult`, passing these heuristic flags to return pre-written strings (e.g., "System operating normally. GLM API unavailable; returning heuristic fallback.").
+**Heuristic Evaluation Engine (Local System Fallback):**
+* Hardcoded risk flags (e.g., max wind > 24km/h) that trigger a default functional dataset if the LLM times out or hallucinates an invalid schema.
 
-### 3.4 API Integration Layer (GLM & Tavily)
-The architecture includes configuration variables (`GLM_BASE_URL`, `GLM_API_KEY`, `GLM_MODEL`) intended to connect to `api.ilmu.ai/v1`. 
-* **Requirement for Implementation:** The static heuristic functions must be replaced or augmented by a `fetch` call that passes the aggregated JSON data to the GLM model. 
-* **Constraint:** The GLM model must be prompted to return a JSON object matching the `AnalysisResult` TypeScript interface to ensure the Next.js frontend hydrates without error.
+## Prerequisites
+* Node.js (v18+)
+* Z.AI GLM API Key
+* Tavily API Key
 
-## 4. Implementation Roadmap (Backend Step-by-Step)
+## Setup
 
-To transform this from a static calculator to the required Hackathon prototype, the `route.ts` file must be built out in the following order:
+```
+```text?code_stdout&code_event_index=2
+README-v3.md generated successfully.
 
-1. **Verify Parser Integrity:** Ensure the `readFile` function robustly handles edge cases (e.g., null values, missing columns) in the uploaded CSVs.
-2. **Finalize Aggregation Logic:** Ensure `summarisePlant` and related functions correctly clamp and map the unstructured CSV inputs to the strict data types required by the `AnalysisResult` schema.
-3. **Construct the LLM Prompt:** Write a prompt template inside `route.ts` that dynamically injects the aggregated data variables.
-4. **Execute the Fetch Call:** Implement the asynchronous POST request to the GLM endpoint. Set strict timeouts.
-5. **Implement JSON Validation:** Write a parsing function to catch and sanitize the LLM response. If the LLM hallucinates markdown or invalid JSON, catch the error and route immediately to the `buildDefaultResult` heuristic fallback.
+```bash
+# Clone the repo
+git clone [https://github.com/your-org/biofin-oracle.git](https://github.com/your-org/biofin-oracle.git)
+cd biofin-oracle/frontend
 
-## 5. Scope & Limitations
-* **Synchronous Bottleneck:** Because Next.js serverless functions have execution timeouts (typically 10-60 seconds depending on the host), the GLM API call must resolve quickly. Lengthy reasoning chains will cause the Vercel deployment to 504 Timeout.
-* **No Historical Context:** Without a database, the system cannot perform true trend analysis over multiple sessions. All insights are generated solely from the instantaneous file payload.
+# Install dependencies
+npm install
+
+# Add Environment variables (not checked in)
+# Create a .env.local file in the root:
+# GLM_API_KEY=your_zai_key_here
+# GLM_MODEL=nemo-super
+# TAVILY_API_KEY=your_tavily_key_here
+```
+
+## Running
+
+```bash
+# Run the development server
+npm run dev
+```
+
+## Project Structure
+
+```plaintext
+frontend/
+  app/
+    api/analyze/route.ts     # Core backend pipeline: file parsing, aggregation, LLM routing
+    page.tsx                 # Main dashboard UI entry point
+    layout.tsx               # Global application layout
+    globals.css              # Tailwind and global styles
+  public/                    # Static assets (SVGs)
+  package.json               # Dependencies and scripts
+  next.config.ts             # Next.js configuration
+```
+
+## System Constraints
+The system architecture dictates strict operational boundaries:
+* **Ephemeral State:** There is no database. All data is processed in-memory and destroyed post-request.
+* **Timeout Risk:** Vercel serverless functions cap execution time. Prolonged LLM inference chains will trigger a 504 error, routing the system to the Heuristic Fallback.
+* **Input Fragility:** The parsing engine relies entirely on the structural integrity of the uploaded CSV files.
+
+## What's Real vs Mocked
+
+**Real (AI-powered & Engineered)**
+* Next.js backend CSV parsing and arithmetic aggregation.
+* Z.AI GLM zero-shot inference generating structural JSON.
+* Client-side digital twin recalculations via Chart.js.
+* Real-time fallback interception for failed LLM calls.
+
+**Mocked (For Hackathon Scope)**
+* **No IoT Integration:** Sensor data is manually uploaded via CSV, not polled from live hardware.
+* **No Distributed Backend:** The system is a synchronous monolith. It does not utilize Django or Celery task queues.
+* **No Persistence:** Historical trend analysis across multiple sessions is impossible due to the lack of PostgreSQL or any persistent database storage.
+
+## Team
+* **Tan Liang Chuan:** Lead AI Orchestrator
+* **Thet Htun Oakar & Ng Yi Ren:** Backend Lead
+* **Tan Li Hong & Chen Bing Yan:** Frontend Lead
+"""
+```
