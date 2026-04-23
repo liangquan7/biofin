@@ -8,7 +8,8 @@ import {
   ChevronRight, RefreshCw, Droplets, Wind,
   Thermometer, CloudRain, ArrowUpRight, ArrowDownRight,
   Sprout, DollarSign, Ship, HeartPulse, Cloud, ChevronDown,
-  Upload, FileText, X, Play, Database,
+  Upload, FileText, X, Play, Database, Newspaper, Radio, Bell,
+  TrendingDown,
 } from 'lucide-react';
 import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement,
@@ -50,13 +51,23 @@ interface AnalysisResult {
   financial: {
     expectedProfit: number; cashRunway: number;
     fertCost: number; laborCost: number; weatherLoss: number;
-    suggestedLoanRate: number;
+    suggestedLoanRate: number; pricePerKg?: number;
+  };
+  // FIX #12: Sales insights from route.ts v2.1
+  salesInsights?: {
+    avgPricePerKg: number; avgVolumeKg: number;
+    priceVolatilityPct: number; minPrice: number; maxPrice: number;
+    dominantChannel: string; hasData: boolean;
+    unsalableRisk?: boolean;
+    alternativeStrategy?: string | null;
   };
   compliance: { label: string; status: string; detail: string }[];
   recommendation: string;
+  // Live Tavily search results passed through from backend (Defect 2 fix)
+  marketNews?: { query: string; title: string; snippet: string; url: string }[];
   summary: {
     totalDataPoints: number; plantGrowthRecords: number;
-    envRecords: number; weatherRecords: number;
+    envRecords: number; weatherRecords: number; salesRecords?: number;
     overallHealthScore: number; riskLevel: string; filesUploaded: number;
   };
 }
@@ -206,7 +217,6 @@ function UploadZone({
       />
 
       {file ? (
-        /* Uploaded state */
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
           <div style={{ width: 42, height: 42, background: '#d1fae5', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <CheckCircle2 size={20} color="#059669" />
@@ -227,7 +237,6 @@ function UploadZone({
           </button>
         </div>
       ) : (
-        /* Empty state */
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14 }}>
             <div style={{ width: 42, height: 42, background: '#e8f5ee', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -268,6 +277,8 @@ export default function BioFinOracle() {
   const [plantFile,   setPlantFile]   = useState<File | null>(null);
   const [envFile,     setEnvFile]     = useState<File | null>(null);
   const [weatherFile, setWeatherFile] = useState<File | null>(null);
+  // FIX #9: 4th upload slot for sales/pricing history
+  const [salesFile,   setSalesFile]   = useState<File | null>(null);
   const [dragOver,    setDragOver]    = useState<string | null>(null);
 
   // ── Dashboard state ──────────────────────────────────────────────────────────
@@ -301,7 +312,9 @@ export default function BioFinOracle() {
   const [terminalStep, setTerminalStep] = useState(0);
   useEffect(() => {
     if (activeTab !== 'page1') return;
-    const t = setTimeout(() => setTerminalStep(s => (s + 1) % 5), 2800);
+    // FIX #4: Only cycle forward to max (4) then freeze; reset only after 6s pause
+    const delay = terminalStep >= 4 ? 6000 : 2800;
+    const t = setTimeout(() => setTerminalStep(s => s >= 4 ? 1 : s + 1), delay);
     return () => clearTimeout(t);
   }, [terminalStep, activeTab]);
 
@@ -320,7 +333,6 @@ export default function BioFinOracle() {
     setApiError(null);
     setProcessingStep(0);
 
-    // Simulate step progression
     for (let i = 1; i <= 5; i++) {
       await new Promise(r => setTimeout(r, 320 + i * 80));
       setProcessingStep(i);
@@ -331,13 +343,13 @@ export default function BioFinOracle() {
       if (plantFile)   fd.append('plantGrowth',    plantFile);
       if (envFile)     fd.append('envVars',         envFile);
       if (weatherFile) fd.append('weatherRecords',  weatherFile);
+      if (salesFile)   fd.append('salesHistory',    salesFile);
 
       const res  = await fetch('/api/analyze', { method: 'POST', body: fd });
       const data: AnalysisResult = await res.json();
 
       if (!res.ok) throw new Error((data as any).error || 'Server error');
 
-      // Hydrate dashboard state from API response
       setAnalysisResult(data);
       setInputs(data.inputs);
       setBioFertReduction(data.bioFertReduction);
@@ -346,27 +358,57 @@ export default function BioFinOracle() {
       if (data.weatherRisk) setWeatherEvent2(data.weatherRisk);
 
     } catch (err) {
-      // On API error, still proceed to dashboard with defaults
+      // Defect 5 fix: stop here — do NOT push to dashboard with null analysisResult
       setApiError(String(err));
+      setIsProcessing(false);
+      return;
     }
 
+    // Only reached when the API call succeeded and state has been populated
     setProcessingStep(5);
     await new Promise(r => setTimeout(r, 400));
     setIsProcessing(false);
     setCurrentPage('dashboard');
-  }, [plantFile, envFile, weatherFile]);
+  }, [plantFile, envFile, weatherFile, salesFile]);
 
   // ── Derived computed values ──────────────────────────────────────────────────
-  const bioHealthIndex  = Math.round(Math.max(38, 91 - bioFertReduction * 1.1 - Math.abs(bioIrrigation - 4) * 4.5));
-  const gradeARatio     = Math.round(Math.max(28, 78 - bioFertReduction * 0.85 - Math.abs(bioIrrigation - 4) * 2.8));
-  const gradeBRatio     = Math.round(Math.min(65, 22 + bioFertReduction * 0.6  + Math.abs(bioIrrigation - 4) * 2.0));
-  const expectedLifespan = Math.max(6, +(15 - bioFertReduction * 0.14 - Math.abs(bioIrrigation - 4) * 0.55).toFixed(1));
+  // Defect 1 fix: anchor ALL derived metrics to the AI's computed base values.
+  // Sliders now apply *deltas* on top of the AI result rather than recalculating
+  // from scratch — so the expensive LLM reasoning is never thrown away.
+  const aiBaseBioHealth = analysisResult?.plantHealth.bioHealthIndex ?? 72;
+  const aiBaseFertRed   = analysisResult?.bioFertReduction            ?? 0;
+  const aiBaseIrrig     = analysisResult?.bioIrrigation               ?? 4;
+
+  const bioHealthIndex = Math.round(Math.max(38,
+    aiBaseBioHealth
+    - (bioFertReduction - aiBaseFertRed) * 1.1
+    - (Math.abs(bioIrrigation - 4) - Math.abs(aiBaseIrrig - 4)) * 4.5
+  ));
+
+  const aiBaseGradeA    = analysisResult?.plantHealth.gradeARatio   ?? 68;
+  const aiBaseGradeB    = analysisResult?.plantHealth.gradeBRatio   ?? 22;
+  const gradeARatio     = Math.round(Math.max(28, Math.min(90,
+    aiBaseGradeA
+    - (bioFertReduction - aiBaseFertRed) * 0.85
+    - (Math.abs(bioIrrigation - 4) - Math.abs(aiBaseIrrig - 4)) * 2.8
+  )));
+  const gradeBRatio     = Math.round(Math.max(5, Math.min(65,
+    aiBaseGradeB
+    + (bioFertReduction - aiBaseFertRed) * 0.6
+    + (Math.abs(bioIrrigation - 4) - Math.abs(aiBaseIrrig - 4)) * 2.0
+  )));
+  const aiBaseLifespan   = analysisResult?.plantHealth.expectedLifespan ?? 14;
+  const expectedLifespan = Math.max(6, +(
+    aiBaseLifespan
+    - (bioFertReduction - aiBaseFertRed) * 0.14
+    - (Math.abs(bioIrrigation - 4) - Math.abs(aiBaseIrrig - 4)) * 0.55
+  ).toFixed(1));
   const bioHealthColor  = bioHealthIndex >= 75 ? '#059669' : bioHealthIndex >= 55 ? '#d97706' : '#ef4444';
 
   const weatherScenarios = {
-    rain:    { label: 'Heavy Downpour',          yar: 42, recoveryCost: 18000, coverage: 12000, emoji: '🌧', color: '#3b82f6' },
-    drought: { label: 'Prolonged Drought',        yar: 65, recoveryCost: 28000, coverage: 15000, emoji: '☀️', color: '#ef4444' },
-    wind:    { label: 'Category 10 Windstorm',    yar: 28, recoveryCost:  8500, coverage: 10000, emoji: '🌀', color: '#7c3aed' },
+    rain:    { label: 'Heavy Downpour',        yar: 42, recoveryCost: 18000, coverage: 12000, emoji: '🌧', color: '#3b82f6' },
+    drought: { label: 'Prolonged Drought',      yar: 65, recoveryCost: 28000, coverage: 15000, emoji: '☀️', color: '#ef4444' },
+    wind:    { label: 'Category 10 Windstorm',  yar: 28, recoveryCost:  8500, coverage: 10000, emoji: '🌀', color: '#7c3aed' },
   };
   const wx = weatherEvent2 ? weatherScenarios[weatherEvent2] : null;
   const insuranceGap = wx ? Math.max(0, wx.recoveryCost - wx.coverage) : 0;
@@ -382,25 +424,69 @@ export default function BioFinOracle() {
   const financingMonth = adjustedRunway < 120 ? Math.ceil(adjustedRunway / 30) : null;
   const totalCashBurn  = Math.round((loanRate - 5) * 800 + laborIncrease * 600 + paymentDelay * 250);
 
+  // Defect 1 fix: profit starts from the AI's expectedProfit and applies slider deltas.
+  // baseRevenue = 35000 is only used when there is no AI result (no files uploaded).
   const stats = useMemo(() => {
-    const baseRevenue = 35000;
-    const cost = (inputs.fert * 12) + (inputs.labor * 15);
+    const aiExpectedProfit  = analysisResult?.financial.expectedProfit ?? 18500;
+    const aiBaseFert        = analysisResult?.inputs.fert              ?? 400;
+    const aiBaseLabor       = analysisResult?.inputs.labor             ?? 120;
+
+    // Cost delta: extra spend (or saving) vs what the AI already priced in
+    const costDelta = (inputs.fert - aiBaseFert) * 12 + (inputs.labor - aiBaseLabor) * 15;
+
+    // Yield adjustment delta (relative to AI's optimal fert level)
     let yieldAdj = 0;
     if (inputs.fert < 300) yieldAdj = -4000;
     else if (inputs.fert > 500 && inputs.fert < 650) yieldAdj = 5500;
     else if (inputs.fert >= 650) yieldAdj = -6000;
-    const profit  = baseRevenue - cost + yieldAdj + (stressEvent?.loss || 0);
-    const runway  = cost > 15000 ? 92 : 142;
-    return { profit, runway, waste: 18.4, confidence: 92 };
-  }, [inputs, stressEvent]);
+    let aiYieldAdj = 0;
+    if (aiBaseFert < 300) aiYieldAdj = -4000;
+    else if (aiBaseFert > 500 && aiBaseFert < 650) aiYieldAdj = 5500;
+    else if (aiBaseFert >= 650) aiYieldAdj = -6000;
+    const yieldAdjDelta = yieldAdj - aiYieldAdj;
+
+    // Bio-health penalty delta
+    const aiBioHP = aiBaseBioHealth >= 75 ? 0 : aiBaseBioHealth >= 55 ? -3000 : -8000;
+    const curBioHP = bioHealthIndex >= 75  ? 0 : bioHealthIndex >= 55  ? -3000 : -8000;
+
+    // Financial sandbox drag: interest rate and payment delay deduct from profit
+    const simulatedFinancialDrag = ((loanRate - 5) * 800) + (paymentDelay * 250);
+
+    const profit = aiExpectedProfit
+      - costDelta
+      + yieldAdjDelta
+      + (curBioHP - aiBioHP)
+      + (stressEvent?.loss || 0)
+      - simulatedFinancialDrag;
+
+    const runway = (inputs.fert * 12 + inputs.labor * 15) > 15000 ? 92 : 142;
+    const waste  = Math.max(5, +(18.4 - (bioHealthIndex - 70) * 0.08).toFixed(1));
+    return { profit, runway, waste, confidence: 92 };
+  }, [analysisResult, inputs, stressEvent, bioHealthIndex, aiBaseBioHealth, loanRate, paymentDelay]);
 
   const animatedProfit = useAnimatedNumber(stats.profit);
+
+  // FIX #5: Derived risk level for header badge
+  const derivedRiskLevel = analysisResult?.summary.riskLevel
+    ?? (bioHealthIndex < 55 || weatherEvent2 ? 'HIGH'
+      : bioHealthIndex < 75 || !!stressEvent ? 'MEDIUM'
+      : 'LOW');
+  const riskColor  = derivedRiskLevel === 'HIGH' ? '#ef4444' : derivedRiskLevel === 'MEDIUM' ? '#d97706' : '#059669';
+  const riskBg     = derivedRiskLevel === 'HIGH' ? '#fef2f2' : derivedRiskLevel === 'MEDIUM' ? '#fffbeb' : '#edfaf4';
+  const riskBorder = derivedRiskLevel === 'HIGH' ? '#fecaca' : derivedRiskLevel === 'MEDIUM' ? '#fde68a' : '#a7f3d0';
 
   const chartData = {
     labels: ['Extreme Bear', 'Below Avg', 'Expected', 'Good', 'Extreme Bull'],
     datasets: [{
       fill: true, label: 'Probability Density',
-      data: [8, 22, Math.max(60, 70 + (stats.profit / 6000)), 28, 8],
+      // FIX: Thai supply surge shifts curve left (bearish); high profit shifts it right (bullish)
+      data: [
+        Math.max(4,  8  + thaiSupply * 0.30),
+        Math.max(10, 22 + thaiSupply * 0.40 - (stats.profit > 15000 ? 5 : 0)),
+        Math.max(40, 70 + (stats.profit / 6000) - thaiSupply * 0.80),
+        Math.max(8,  28 - thaiSupply * 0.20),
+        Math.max(3,  8  - thaiSupply * 0.15),
+      ],
       borderColor: '#059669', backgroundColor: 'rgba(5,150,105,0.08)',
       borderWidth: 2, tension: 0.45,
       pointBackgroundColor: '#059669', pointRadius: 4, pointHoverRadius: 6,
@@ -417,19 +503,19 @@ export default function BioFinOracle() {
   };
 
   const stressEvents = [
-    { id: 'port',  title: 'Port Klang 7-Day Logistics Disruption',    loss: -15000, impact: 'Logistics disruption · Direct loss RM 15,000' },
+    { id: 'port',  title: 'Port Klang 7-Day Logistics Disruption',     loss: -15000, impact: 'Logistics disruption · Direct loss RM 15,000' },
     { id: 'flood', title: 'Extreme Rainfall · Farmland Flooded 3 Days', loss: -22000, impact: '40% yield loss · Estimated loss RM 22,000' },
     { id: 'thai',  title: 'Thai Dumping · Market Premium Eliminated',   loss:  -9500, impact: 'Price drop RM 8/kg · Loss RM 9,500' },
     { id: 'pest',  title: 'Pest Outbreak · Emergency Spray',            loss:  -6000, impact: 'Pesticide costs surge · Loss RM 6,000' },
   ];
 
   const complianceItems = analysisResult?.compliance ?? [
-    { label: 'Invoice XML Format',            status: 'error', detail: 'Missing <TaxTotal> node' },
-    { label: 'MyInvois Digital Signature',    status: 'ok',    detail: 'Certificate valid until 2027-03' },
-    { label: 'Supplier TIN Verification',     status: 'error', detail: '3 supplier TINs unverified' },
-    { label: 'SST Tax Rate Accuracy',         status: 'ok',    detail: 'All compliant with 6% standard rate' },
-    { label: 'Compliance Submission Deadline',status: 'warn',  detail: '18 days until Q2 deadline' },
-    { label: 'e-Invoicing Version',           status: 'ok',    detail: 'Upgraded to MyInvois 2.1' },
+    { label: 'Invoice XML Format',             status: 'error', detail: 'Missing <TaxTotal> node' },
+    { label: 'MyInvois Digital Signature',     status: 'ok',    detail: 'Certificate valid until 2027-03' },
+    { label: 'Supplier TIN Verification',      status: 'error', detail: '3 supplier TINs unverified' },
+    { label: 'SST Tax Rate Accuracy',          status: 'ok',    detail: 'All compliant with 6% standard rate' },
+    { label: 'Compliance Submission Deadline', status: 'warn',  detail: '18 days until Q2 deadline' },
+    { label: 'e-Invoicing Version',            status: 'ok',    detail: 'Upgraded to MyInvois 2.1' },
   ];
 
   const board = [
@@ -447,14 +533,17 @@ export default function BioFinOracle() {
 
   const card: React.CSSProperties = { background: '#fff', border: '1px solid #e4ede8', borderRadius: 20, padding: 24 };
 
-  // Dynamic NPK values from API result or defaults
   const npkData = analysisResult?.plantHealth.npk ?? {
     nitrogen:   { ppm: 42,  pct: 72 },
     phosphorus: { ppm: 18,  pct: 56 },
     potassium:  { ppm: 120, pct: 88 },
   };
 
-  const envData = analysisResult?.environment ?? { avgTemp: 30, windSpeed: 22, pressure: 1008, solarRadiation: 750 };
+  // FIX #6 & #7: Pull all env readings from API result
+  const envData     = analysisResult?.environment ?? { avgTemp: 30, avgHumidity: 82, windSpeed: 22, pressure: 1008, solarRadiation: 750, co2: 412 };
+  const soilPH      = analysisResult?.plantHealth.soilPH      ?? 6.5;
+  const soilMoisture = analysisResult?.plantHealth.soilMoisture ?? 82;
+
   const forecastData = analysisResult?.weatherDetails.forecast ?? [
     { day: 'Today', emoji: '☀️', temp: '32°C', alert: false },
     { day: 'Tue',   emoji: '🌤️', temp: '31°C', alert: false },
@@ -523,10 +612,8 @@ export default function BioFinOracle() {
 
           {/* ── Hero ── */}
           <div style={{ background: 'linear-gradient(160deg, #0f2d1e 0%, #1a4a30 60%, #0d3320 100%)', padding: '52px 40px 48px', position: 'relative', overflow: 'hidden', flexShrink: 0 }}>
-            {/* Decorative orbs */}
             <div style={{ position: 'absolute', top: -80, right: -80, width: 340, height: 340, background: 'radial-gradient(circle, rgba(52,211,153,0.12) 0%, transparent 70%)', pointerEvents: 'none' }} />
             <div style={{ position: 'absolute', bottom: -60, left: '30%', width: 260, height: 260, background: 'radial-gradient(circle, rgba(5,150,105,0.08) 0%, transparent 70%)', pointerEvents: 'none' }} />
-
             <div style={{ maxWidth: 960, margin: '0 auto', position: 'relative' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
                 <PulsingDot color="#34d399" />
@@ -537,15 +624,14 @@ export default function BioFinOracle() {
                 <span style={{ color: '#34d399' }}>to Activate AI Analysis</span>
               </h1>
               <p style={{ fontSize: 15, color: '#a1c4a1', lineHeight: 1.7, maxWidth: 580, marginBottom: 28 }}>
-                Import your plant growth records, environmental sensor data, and historical weather logs. BioFin Oracle will analyse every data point and generate a full farm intelligence report.
+                Import your plant growth records, environmental sensor data, historical weather logs, and sales pricing history. BioFin Oracle will analyse every data point and generate a full farm intelligence report.
               </p>
-
-              {/* Stats bar */}
               <div style={{ display: 'flex', gap: 32 }}>
                 {[
                   { label: 'Data types supported', val: 'CSV & JSON' },
-                  { label: 'Analysis dimensions', val: '12+' },
-                  { label: 'AI agents deployed', val: '4' },
+                  { label: 'Analysis dimensions',  val: '14+' },
+                  { label: 'AI agents deployed',   val: '4' },
+                  { label: 'File slots',            val: '4' },
                 ].map(({ label, val }) => (
                   <div key={label}>
                     <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 20, fontWeight: 800, color: '#34d399', lineHeight: 1 }}>{val}</div>
@@ -559,15 +645,14 @@ export default function BioFinOracle() {
           {/* ── Upload Body ── */}
           <div style={{ flex: 1, padding: '40px', maxWidth: 1060, margin: '0 auto', width: '100%' }}>
 
-            {/* Upload zones grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20, marginBottom: 32 }}>
-
+            {/* FIX #9: 4-slot 2x2 grid (was 3-column) */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 20, marginBottom: 32 }}>
               <UploadZone
                 id="plantGrowth"
                 icon={<Sprout size={20} color="#059669" />}
                 title="Plant Growth Conditions"
                 description="Fertilizer, irrigation, labor, soil metrics per date"
-                hint={`date\nfertilizer_kg_ha\nirrigation_mm\nlabor_hours\nsoil_ph\nsoil_moisture\nnitrogen_ppm\nphosphorus_ppm\npotassium_ppm`}
+                hint={`date\nfertilizer_kg_ha\nirrigation_mm\nirrigation_frequency\nlabor_hours\nsoil_ph\nsoil_moisture\nnitrogen_ppm\nphosphorus_ppm\npotassium_ppm`}
                 accepted=".csv,.json"
                 file={plantFile}
                 onFile={setPlantFile}
@@ -575,7 +660,6 @@ export default function BioFinOracle() {
                 onDragOver={() => setDragOver('plant')}
                 onDragLeave={() => setDragOver(null)}
               />
-
               <UploadZone
                 id="envVars"
                 icon={<Thermometer size={20} color="#3b82f6" />}
@@ -589,7 +673,6 @@ export default function BioFinOracle() {
                 onDragOver={() => setDragOver('env')}
                 onDragLeave={() => setDragOver(null)}
               />
-
               <UploadZone
                 id="weatherRecords"
                 icon={<CloudRain size={20} color="#7c3aed" />}
@@ -603,6 +686,20 @@ export default function BioFinOracle() {
                 onDragOver={() => setDragOver('weather')}
                 onDragLeave={() => setDragOver(null)}
               />
+              {/* FIX #9: New sales history upload zone */}
+              <UploadZone
+                id="salesHistory"
+                icon={<TrendingUp size={20} color="#d97706" />}
+                title="Sales & Pricing History"
+                description="Historical price per kg, volume, and channel data"
+                hint={`date\nprice_per_kg\nvolume_kg\nchannel\nrevenue`}
+                accepted=".csv,.json"
+                file={salesFile}
+                onFile={setSalesFile}
+                dragOver={dragOver === 'sales'}
+                onDragOver={() => setDragOver('sales')}
+                onDragLeave={() => setDragOver(null)}
+              />
             </div>
 
             {/* Info callout */}
@@ -613,13 +710,13 @@ export default function BioFinOracle() {
               <div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: '#1a3a28', marginBottom: 5 }}>All files are optional — but more data means better insights</div>
                 <p style={{ fontSize: 12.5, color: '#6b8f7e', lineHeight: 1.6, margin: 0 }}>
-                  You can proceed with zero, one, or all three files. BioFin Oracle will use sensible defaults for missing data and clearly indicate which metrics are estimated vs data-driven. Upload at minimum one file to generate a personalised analysis.
+                  You can proceed with zero, one, or all four files. BioFin Oracle will use sensible defaults for missing data and clearly indicate which metrics are estimated vs data-driven. The new <strong style={{ color: '#d97706' }}>Sales History</strong> file unlocks price volatility analysis and market arbitrage recommendations.
                 </p>
               </div>
               <div style={{ flexShrink: 0, background: '#f6faf8', border: '1px solid #e4ede8', borderRadius: 12, padding: '8px 16px', textAlign: 'center' }}>
                 <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 22, fontWeight: 800, color: '#059669' }}>
-                  {[plantFile, envFile, weatherFile].filter(Boolean).length}
-                  <span style={{ fontSize: 13, color: '#8aac98', marginLeft: 2 }}>/3</span>
+                  {[plantFile, envFile, weatherFile, salesFile].filter(Boolean).length}
+                  <span style={{ fontSize: 13, color: '#8aac98', marginLeft: 2 }}>/4</span>
                 </div>
                 <div style={{ fontSize: 10, color: '#8aac98', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' as const, marginTop: 2 }}>Files ready</div>
               </div>
@@ -677,13 +774,11 @@ export default function BioFinOracle() {
               </button>
             </div>
 
-            {/* Footer note */}
             <div style={{ textAlign: 'center', marginTop: 20 }}>
               <span style={{ fontSize: 11.5, color: '#8aac98' }}>
                 Your data is processed server-side and never stored permanently. &nbsp;•&nbsp; Supported: CSV (comma-separated) and JSON arrays.
               </span>
             </div>
-
           </div>
         </div>
       </>
@@ -691,7 +786,7 @@ export default function BioFinOracle() {
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // ── DASHBOARD (original content) ──────────────────────────────────────────
+  // ── DASHBOARD ──────────────────────────────────────────────────────────────
   // ═══════════════════════════════════════════════════════════════════════════
 
   return (
@@ -712,17 +807,15 @@ export default function BioFinOracle() {
             <div style={{ marginLeft: 8, display: 'flex', alignItems: 'center', gap: 6, background: '#edfaf4', border: '1px solid #a7f3d0', borderRadius: 20, padding: '4px 12px' }}>
               <PulsingDot /><span style={{ fontSize: 11, color: '#059669', fontWeight: 700 }}>Live Monitoring</span>
             </div>
-            {/* Back to upload */}
-            {analysisResult && (
-              <button
-                onClick={() => setCurrentPage('upload')}
-                style={{ marginLeft: 8, background: 'none', border: '1px solid #d1e8da', borderRadius: 20, padding: '4px 12px', fontSize: 11, color: '#4d7a62', fontWeight: 600, cursor: 'pointer', fontFamily: "'Sora',sans-serif", display: 'flex', alignItems: 'center', gap: 5 }}
-              >
-                <Upload size={11} /> Re-upload Data
-              </button>
-            )}
+            {/* FIX #3: Back button always visible, not gated on analysisResult */}
+            <button
+              onClick={() => setCurrentPage('upload')}
+              style={{ marginLeft: 8, background: 'none', border: '1px solid #d1e8da', borderRadius: 20, padding: '4px 12px', fontSize: 11, color: '#4d7a62', fontWeight: 600, cursor: 'pointer', fontFamily: "'Sora',sans-serif", display: 'flex', alignItems: 'center', gap: 5 }}
+            >
+              <Upload size={11} /> Re-upload Data
+            </button>
           </div>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             {analysisResult && (
               <div style={{ background: '#f6faf8', border: '1px solid #e4ede8', borderRadius: 12, padding: '6px 14px', display: 'flex', gap: 6, alignItems: 'center' }}>
                 <Database size={12} color="#8aac98" />
@@ -734,6 +827,12 @@ export default function BioFinOracle() {
               <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13, fontWeight: 600, color: '#4d7a62' }}>
                 {now.toLocaleTimeString('en-MY', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
               </div>
+            </div>
+            <div style={{ width: 1, height: 28, background: '#e4ede8' }} />
+            {/* FIX #5: Risk Index badge */}
+            <div style={{ textAlign: 'center', background: riskBg, border: `1px solid ${riskBorder}`, borderRadius: 12, padding: '7px 14px' }}>
+              <div style={{ fontSize: 10, color: '#8aac98', fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Risk Index</div>
+              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 15, fontWeight: 700, color: riskColor, lineHeight: 1.2 }}>{derivedRiskLevel}</div>
             </div>
             <div style={{ width: 1, height: 28, background: '#e4ede8' }} />
             <div style={{ textAlign: 'center', background: stats.runway < 100 ? '#fffbeb' : '#edfaf4', border: `1px solid ${stats.runway < 100 ? '#fde68a' : '#a7f3d0'}`, borderRadius: 12, padding: '7px 16px' }}>
@@ -748,9 +847,9 @@ export default function BioFinOracle() {
         {/* ── Nav ── */}
         <nav style={{ display: 'flex', background: '#fff', borderBottom: '1px solid #e4ede8', padding: '0 32px', flexShrink: 0 }}>
           {[
-            { id: 'page1', label: '1. Command Center',    Icon: Zap       },
-            { id: 'page2', label: '2. Simulation Sandbox', Icon: BarChart3 },
-            { id: 'page3', label: '3. Global Operations',  Icon: Globe     },
+            { id: 'page1', label: '1. Command Center',      Icon: Zap        },
+            { id: 'page2', label: '2. Simulation Sandbox',  Icon: BarChart3  },
+            { id: 'page3', label: '3. Global Operations',   Icon: Globe      },
             { id: 'page4', label: '4. SME Compliance & ROI', Icon: ShieldCheck },
           ].map(({ id, label, Icon }) => (
             <button key={id} onClick={() => setActiveTab(id)} style={{
@@ -776,7 +875,7 @@ export default function BioFinOracle() {
           {activeTab === 'page1' && (
             <div className="tab-content" style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 24 }}>
 
-              {/* AI recommendation banner (only when data uploaded) */}
+              {/* AI recommendation banner */}
               {analysisResult && (
                 <div style={{ background: '#edfaf4', border: '1px solid #a7f3d0', borderRadius: 16, padding: '16px 22px', display: 'flex', alignItems: 'flex-start', gap: 14 }}>
                   <div style={{ width: 36, height: 36, background: '#d1fae5', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -879,6 +978,20 @@ export default function BioFinOracle() {
                         </div>
                       </div>
                     ))}
+
+                    {/* FIX #6: Soil pH & Moisture display (was missing entirely) */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 8 }}>
+                      <div style={{ background: '#f6faf8', border: `1px solid ${soilPH >= 5.8 && soilPH <= 7.0 ? '#d1fae5' : '#fde68a'}`, borderRadius: 12, padding: '12px 14px', textAlign: 'center' }}>
+                        <div style={{ fontSize: 10, color: '#8aac98', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' as const, marginBottom: 6 }}>Soil pH</div>
+                        <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 22, fontWeight: 800, color: soilPH >= 5.8 && soilPH <= 7.0 ? '#059669' : '#d97706' }}>{soilPH.toFixed(1)}</div>
+                        <div style={{ fontSize: 10, color: '#8aac98', marginTop: 4 }}>Target: 5.8–7.0</div>
+                      </div>
+                      <div style={{ background: '#f6faf8', border: `1px solid ${soilMoisture >= 70 && soilMoisture <= 90 ? '#d1fae5' : '#fde68a'}`, borderRadius: 12, padding: '12px 14px', textAlign: 'center' }}>
+                        <div style={{ fontSize: 10, color: '#8aac98', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' as const, marginBottom: 6 }}>Soil Moisture</div>
+                        <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 22, fontWeight: 800, color: soilMoisture >= 70 && soilMoisture <= 90 ? '#059669' : '#d97706' }}>{soilMoisture}%</div>
+                        <div style={{ fontSize: 10, color: '#8aac98', marginTop: 4 }}>Target: 70–90%</div>
+                      </div>
+                    </div>
                   </div>
                   <div>
                     <div style={{ fontSize: 14, fontWeight: 700, color: '#1a3a28', marginBottom: 20 }}>Canopy &amp; Drone Analytics</div>
@@ -941,15 +1054,18 @@ export default function BioFinOracle() {
                   <div>
                     <div style={{ fontSize: 13, fontWeight: 600, color: '#4d7a62', marginBottom: 16 }}>Live Sensor Telemetry</div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                      {/* FIX #7: Added Humidity and CO2 from API data */}
                       {[
-                        { label: 'Wind Speed',         value: `${envData.windSpeed} km/h`,       sub: 'Rising',   valueColor: '#d97706', borderBottom: true  },
-                        { label: 'Barometric Pressure', value: `${envData.pressure} hPa`,         sub: 'Dropping', valueColor: '#1a3a28', borderBottom: true  },
-                        { label: 'Solar Radiation',    value: `${envData.solarRadiation} W/m²`,  sub: '',         valueColor: '#059669', borderBottom: false },
+                        { label: 'Wind Speed',          value: `${envData.windSpeed} km/h`,       sub: 'Rising',   valueColor: '#d97706', borderBottom: true  },
+                        { label: 'Barometric Pressure', value: `${envData.pressure} hPa`,          sub: 'Dropping', valueColor: '#1a3a28', borderBottom: true  },
+                        { label: 'Humidity',            value: `${envData.avgHumidity}%`,          sub: '',         valueColor: '#3b82f6', borderBottom: true  },
+                        { label: 'CO₂ Concentration',  value: `${envData.co2} ppm`,               sub: envData.co2 > 450 ? 'Elevated' : 'Normal', valueColor: envData.co2 > 450 ? '#d97706' : '#059669', borderBottom: true },
+                        { label: 'Solar Radiation',    value: `${envData.solarRadiation} W/m²`,   sub: '',         valueColor: '#059669', borderBottom: false },
                       ].map(({ label, value, sub, valueColor, borderBottom }) => (
-                        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px 0', borderBottom: borderBottom ? '1px solid #f0f7f3' : 'none' }}>
-                          <span style={{ fontSize: 14, color: '#8aac98', fontWeight: 500 }}>{label}</span>
+                        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 0', borderBottom: borderBottom ? '1px solid #f0f7f3' : 'none' }}>
+                          <span style={{ fontSize: 13, color: '#8aac98', fontWeight: 500 }}>{label}</span>
                           <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
-                            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 22, fontWeight: 800, color: valueColor }}>{value}</span>
+                            <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 20, fontWeight: 800, color: valueColor }}>{value}</span>
                             {sub && <span style={{ fontSize: 12, color: '#8aac98' }}>({sub})</span>}
                           </div>
                         </div>
@@ -988,10 +1104,30 @@ export default function BioFinOracle() {
                         <div style={{ fontSize: 12, color: '#8aac98', fontWeight: 500, marginTop: 4 }}>ETA 5d</div>
                       </div>
                     </div>
+                    {/* Sales insights from API when available */}
+                    {analysisResult?.salesInsights?.hasData && (
+                      <div style={{ marginTop: 14, background: analysisResult.salesInsights.priceVolatilityPct > 25 ? '#fffbeb' : '#edfaf4', border: `1px solid ${analysisResult.salesInsights.priceVolatilityPct > 25 ? '#fde68a' : '#a7f3d0'}`, borderRadius: 14, padding: '14px 16px' }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: '#059669', marginBottom: 6 }}>📊 Sales History Insights</div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ fontSize: 10, color: '#8aac98' }}>Avg Price</div>
+                            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 700, color: '#1a3a28', fontSize: 14 }}>RM {analysisResult.salesInsights.avgPricePerKg}/kg</div>
+                          </div>
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ fontSize: 10, color: '#8aac98' }}>Volatility</div>
+                            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 700, color: analysisResult.salesInsights.priceVolatilityPct > 25 ? '#d97706' : '#059669', fontSize: 14 }}>{analysisResult.salesInsights.priceVolatilityPct}%</div>
+                          </div>
+                          <div style={{ textAlign: 'center' }}>
+                            <div style={{ fontSize: 10, color: '#8aac98' }}>Top Channel</div>
+                            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontWeight: 700, color: '#3b82f6', fontSize: 12 }}>{analysisResult.salesInsights.dominantChannel}</div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div>
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, marginBottom: 6 }}>
-                      <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 52, fontWeight: 800, color: '#059669', lineHeight: 1 }}>RM 55</span>
+                      <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 52, fontWeight: 800, color: '#059669', lineHeight: 1 }}>RM {analysisResult?.financial.pricePerKg ?? 55}</span>
                       <span style={{ fontSize: 16, color: '#4d7a62', fontWeight: 600 }}>/ kg (Farm-Gate)</span>
                     </div>
                     <div style={{ borderLeft: '3px solid #059669', paddingLeft: 12, marginBottom: 24 }}>
@@ -1017,6 +1153,111 @@ export default function BioFinOracle() {
                   </div>
                 </div>
               </div>
+
+              {/* SECTION 5: Transparency & Evidence Feed (FIX #8 — entirely new section) */}
+              <div style={{ background: '#fff', border: '1px solid #e4ede8', borderRadius: 22, padding: '32px 36px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 28 }}>
+                  <Radio size={20} color="#7c3aed" />
+                  <span style={{ fontSize: 22, fontWeight: 800, color: '#0f2d1e', letterSpacing: '-0.02em' }}>Transparency &amp; Evidence Feed</span>
+                  <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6, background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: 20, padding: '4px 12px' }}>
+                    <PulsingDot color="#7c3aed" />
+                    <span style={{ fontSize: 11, color: '#7c3aed', fontWeight: 700 }}>Live Intelligence Channels</span>
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 20 }}>
+                  {/* Channel 1: News Aggregation — live Tavily results when available */}
+                  <div style={{ background: '#fafcfb', border: '1px solid #e4ede8', borderRadius: 16, padding: '20px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                      <div style={{ width: 30, height: 30, background: '#eff6ff', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <Newspaper size={14} color="#3b82f6" />
+                      </div>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: '#1a3a28' }}>Market News Aggregation</span>
+                      {analysisResult?.marketNews?.length ? (
+                        <span style={{ marginLeft: 'auto', fontSize: 9, fontWeight: 700, color: '#059669', background: '#edfaf4', border: '1px solid #a7f3d0', borderRadius: 10, padding: '2px 7px' }}>LIVE</span>
+                      ) : (
+                        <span style={{ marginLeft: 'auto', fontSize: 9, fontWeight: 700, color: '#8aac98', background: '#f6faf8', border: '1px solid #e4ede8', borderRadius: 10, padding: '2px 7px' }}>DEMO</span>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      {(analysisResult?.marketNews?.length
+                        ? analysisResult.marketNews.slice(0, 3).map(n => ({
+                            tag:   `🌐 ${new URL(n.url).hostname.replace('www.', '')}`,
+                            text:  n.snippet,
+                            color: '#3b82f6',
+                            bg:    '#eff6ff',
+                            url:   n.url,
+                          }))
+                        : [
+                            { tag: '🌐 Reuters', text: 'Thai durian supply surplus detected — estimated 15k extra tons entering Singapore market by Friday.', color: '#d97706', bg: '#fffbeb', url: null },
+                            { tag: '📰 FAMA',    text: 'MyHargaTani shows local Musang King averaging RM 54–58/kg this week, within seasonal norms.',          color: '#059669', bg: '#edfaf4', url: null },
+                            { tag: '🏦 DOSM',    text: 'Macro export data: Malaysian agricultural exports up 8.2% YoY in Q1 2026.',                            color: '#3b82f6', bg: '#eff6ff', url: null },
+                          ]
+                      ).map((item, i) => (
+                        <div key={i} style={{ background: item.bg, borderRadius: 10, padding: '10px 12px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: item.color }}>{item.tag}</span>
+                            {item.url && (
+                              <a href={item.url} target="_blank" rel="noreferrer" style={{ fontSize: 9, color: '#8aac98', textDecoration: 'none', fontWeight: 600 }}>↗ Source</a>
+                            )}
+                          </div>
+                          <p style={{ fontSize: 11.5, color: '#4d7a62', lineHeight: 1.6, margin: 0 }}>{item.text}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Channel 2: Sensor Stream */}
+                  <div style={{ background: '#fafcfb', border: '1px solid #e4ede8', borderRadius: 16, padding: '20px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                      <div style={{ width: 30, height: 30, background: '#edfaf4', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <Activity size={14} color="#059669" />
+                      </div>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: '#1a3a28' }}>Orchard Sensor Stream</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                      {[
+                        { label: 'Soil Moisture (Sector A)', val: `${soilMoisture}%`, alert: soilMoisture < 65 || soilMoisture > 92 },
+                        { label: 'Soil pH (Sector A)',       val: soilPH.toFixed(1),  alert: soilPH < 5.8 || soilPH > 7.0 },
+                        { label: 'CO₂ Concentration',       val: `${envData.co2} ppm`, alert: envData.co2 > 450 },
+                        { label: 'Canopy Humidity',         val: `${envData.avgHumidity}%`, alert: false },
+                        { label: 'Ambient Temp',            val: `${envData.avgTemp}°C`, alert: envData.avgTemp > 36 },
+                        { label: 'Wind Speed',              val: `${envData.windSpeed} km/h`, alert: envData.windSpeed > 24 },
+                      ].map(({ label, val, alert }, i, arr) => (
+                        <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 0', borderBottom: i < arr.length - 1 ? '1px solid #f0f7f3' : 'none' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <div style={{ width: 6, height: 6, borderRadius: '50%', background: alert ? '#d97706' : '#059669', flexShrink: 0 }} />
+                            <span style={{ fontSize: 11.5, color: '#6b8f7e' }}>{label}</span>
+                          </div>
+                          <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 13, fontWeight: 700, color: alert ? '#d97706' : '#1a3a28' }}>{val}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Channel 3: Regulatory Alerts */}
+                  <div style={{ background: '#fafcfb', border: '1px solid #e4ede8', borderRadius: 16, padding: '20px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                      <div style={{ width: 30, height: 30, background: '#fffbeb', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        <Bell size={14} color="#d97706" />
+                      </div>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: '#1a3a28' }}>Regulatory Alerts</span>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      {[
+                        { tag: '🇪🇺 EU EUDR',  severity: 'warn',  text: 'New deforestation regulation (EUDR) applies to Malaysian tropical fruit exports from Jan 2026. Traceability documentation required.', color: '#d97706', bg: '#fffbeb' },
+                        { tag: '🏛️ MOA',       severity: 'info',  text: 'Ministry of Agriculture announces updated MyGAP certification scheme — renewal applications open until May 31.', color: '#3b82f6', bg: '#eff6ff' },
+                        { tag: '📋 LHDN',      severity: 'warn',  text: 'e-Invoicing Phase 3 mandatory for all SMEs with turnover above RM 500k by August 2026. Compliance deadline: 18 days.', color: '#d97706', bg: '#fffbeb' },
+                      ].map((item, i) => (
+                        <div key={i} style={{ background: item.bg, borderRadius: 10, padding: '10px 12px' }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: item.color, marginBottom: 4 }}>{item.tag}</div>
+                          <p style={{ fontSize: 11.5, color: '#4d7a62', lineHeight: 1.6, margin: 0 }}>{item.text}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
             </div>
           )}
 
@@ -1031,8 +1272,8 @@ export default function BioFinOracle() {
                       <span style={{ fontSize: 14, fontWeight: 700, color: '#0f2d1e' }}>Digital Twin Simulation</span>
                     </div>
                     {[
-                      { key: 'fert'  as const, label: 'Fertilizer Input',   unit: 'kg/ha',  min: 200, max: 800, zone: [300, 650] as [number,number] },
-                      { key: 'labor' as const, label: 'Extra Labor Hours',   unit: 'hours',  min: 0,   max: 300, zone: [0, 200]   as [number,number] },
+                      { key: 'fert'  as const, label: 'Fertilizer Input',  unit: 'kg/ha', min: 200, max: 800, zone: [300, 650] as [number,number] },
+                      { key: 'labor' as const, label: 'Extra Labor Hours', unit: 'hours', min: 0,   max: 300, zone: [0, 200]   as [number,number] },
                     ].map(({ key, label, unit, min, max, zone }) => {
                       const val    = inputs[key];
                       const inZone = val >= zone[0] && val <= zone[1];
@@ -1070,6 +1311,12 @@ export default function BioFinOracle() {
                 <div style={{ ...card, display: 'flex', flexDirection: 'column' }}>
                   <div style={{ fontSize: 14, fontWeight: 700, color: '#0f2d1e', marginBottom: 4 }}>Profit Distribution</div>
                   <div style={{ fontSize: 11, color: '#8aac98', marginBottom: 22, fontStyle: 'italic' }}>Simulating 10,000 scenario combinations…</div>
+                  {/* FIX #2 note: bio health penalty now reflected here via stats.profit */}
+                  {bioHealthIndex < 75 && (
+                    <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, padding: '8px 12px', marginBottom: 12, fontSize: 11.5, color: '#92400e' }}>
+                      ⚠ Bio-health index {bioHealthIndex}/100 — applying {bioHealthIndex < 55 ? 'RM 8,000' : 'RM 3,000'} yield penalty to profit projection
+                    </div>
+                  )}
                   <div style={{ height: 210 }}><Line data={chartData} options={chartOptions as any} /></div>
                   <div style={{ borderTop: '1px solid #f0f7f3', paddingTop: 20, marginTop: 20, textAlign: 'center' }}>
                     <div style={{ fontSize: 10, color: '#8aac98', fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase' as const, marginBottom: 8 }}>Expected Net Profit</div>
@@ -1109,7 +1356,7 @@ export default function BioFinOracle() {
                     </div>
                     <div>
                       <div style={{ fontSize: 14, fontWeight: 700, color: '#0f2d1e', lineHeight: 1.2 }}>Bio-Cultivation Optimiser</div>
-                      <div style={{ fontSize: 11, color: '#8aac98', marginTop: 2 }}>Simulate fertilizer cut &amp; irrigation impact on plant health</div>
+                      <div style={{ fontSize: 11, color: '#8aac98', marginTop: 2 }}>Sliders now drive bio health penalty in profit calculation</div>
                     </div>
                   </div>
                   <SimSlider label="Bio-Fertilizer Reduction" unit="%" min={0} max={50} value={bioFertReduction} onChange={setBioFertReduction} zone={[0, 20]} formatVal={v => `-${v}%`} />
@@ -1121,8 +1368,8 @@ export default function BioFinOracle() {
                         <div style={{ fontSize: 11, color: '#8aac98', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' as const, marginBottom: 6 }}>Bio Health Index</div>
                         <div style={{ fontSize: 12, color: bioHealthColor, fontWeight: 700, marginBottom: 10 }}>{bioHealthIndex >= 75 ? '✓ Optimal Zone' : bioHealthIndex >= 55 ? '⚠ Warning' : '⛔ Critical'}</div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                          <MetricBox label="Grade A"  value={`${gradeARatio}%`}  color="#059669" />
-                          <MetricBox label="Grade B"  value={`${gradeBRatio}%`}  color="#d97706" />
+                          <MetricBox label="Grade A"  value={`${gradeARatio}%`}   color="#059669" />
+                          <MetricBox label="Grade B"  value={`${gradeBRatio}%`}   color="#d97706" />
                           <MetricBox label="Lifespan" value={`${expectedLifespan}y`} color="#3b82f6" sub="expected" />
                           <MetricBox label="Bio Idx"  value={`${bioHealthIndex}`} color={bioHealthColor} sub="/100" />
                         </div>
@@ -1214,15 +1461,15 @@ export default function BioFinOracle() {
                       <div style={{ fontSize: 11, color: '#8aac98', marginTop: 2 }}>Optimise channel allocation under regional supply &amp; logistics shocks</div>
                     </div>
                   </div>
-                  <SimSlider label="Thai Supply Surge"        unit="%"    min={0} max={40} value={thaiSupply}   onChange={setThaiSupply}   zone={[0, 10]} formatVal={v => `+${v}%`} />
-                  <SimSlider label="Singapore Port Lockdown"  unit="days" min={0} max={21} value={portLockDays} onChange={setPortLockDays} zone={[0, 3]}  />
-                  <SimSlider label="Shipping Delay"           unit="days" min={0} max={7}  value={shipDelay}    onChange={setShipDelay}    zone={[0, 2]}  />
+                  <SimSlider label="Thai Supply Surge"       unit="%"    min={0} max={40} value={thaiSupply}   onChange={setThaiSupply}   zone={[0, 10]} formatVal={v => `+${v}%`} />
+                  <SimSlider label="Singapore Port Lockdown" unit="days" min={0} max={21} value={portLockDays} onChange={setPortLockDays} zone={[0, 3]}  />
+                  <SimSlider label="Shipping Delay"          unit="days" min={0} max={7}  value={shipDelay}    onChange={setShipDelay}    zone={[0, 2]}  />
                   <div style={{ borderTop: '1px solid #f0f7f3', paddingTop: 16, marginTop: 4 }}>
                     <div className="sim-module-label">AI Optimal Channel Allocation</div>
                     {[
-                      { label: 'Local Market',      pct: localRatio, color: '#059669' },
-                      { label: 'Singapore Export',  pct: sgRatio,    color: '#3b82f6' },
-                      { label: 'Hong Kong Export',  pct: hkRatio,    color: '#7c3aed' },
+                      { label: 'Local Market',     pct: localRatio, color: '#059669' },
+                      { label: 'Singapore Export', pct: sgRatio,    color: '#3b82f6' },
+                      { label: 'Hong Kong Export', pct: hkRatio,    color: '#7c3aed' },
                     ].map(({ label, pct, color }) => (
                       <div key={label} style={{ marginBottom: 12 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5, alignItems: 'center' }}>
@@ -1392,10 +1639,82 @@ export default function BioFinOracle() {
                 </div>
               </div>
 
+              {/* SECTION: Unsalable Inventory Pivot & Dynamic Logistics (滞销解决方案) */}
+              <div style={{ ...card }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18 }}>
+                  <RefreshCw size={16} color="#7c3aed" />
+                  <span style={{ fontSize: 14, fontWeight: 700, color: '#0f2d1e' }}>Unsalable Inventory Pivot &amp; Dynamic Logistics</span>
+                  {(analysisResult?.salesInsights?.unsalableRisk || thaiSupply > 20) && (
+                    <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 700, color: '#d97706', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 20, padding: '2px 10px' }}>
+                      ⚠ Risk Detected
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+
+                  {/* Left: Product Diversion Strategy */}
+                  <div style={{
+                    background: analysisResult?.salesInsights?.unsalableRisk || thaiSupply > 20 ? '#fffbeb' : '#f6faf8',
+                    border: `1px solid ${analysisResult?.salesInsights?.unsalableRisk || thaiSupply > 20 ? '#fde68a' : '#e4ede8'}`,
+                    borderRadius: 12, padding: 16,
+                  }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' as const, color: analysisResult?.salesInsights?.unsalableRisk || thaiSupply > 20 ? '#d97706' : '#4d7a62', marginBottom: 8 }}>
+                      Product Diversion Strategy
+                    </div>
+                    <p style={{ fontSize: 12.5, color: '#374151', lineHeight: 1.6, margin: 0 }}>
+                      {analysisResult?.salesInsights?.alternativeStrategy
+                        || (thaiSupply > 20
+                          ? 'High market saturation detected. AI recommends converting 25% of near-ripe harvest into frozen durian paste for dessert manufacturers. Estimated margin retention: 68%.'
+                          : 'Market absorption is optimal. No by-product conversion required at current supply levels.')}
+                    </p>
+                    {(analysisResult?.salesInsights?.unsalableRisk || thaiSupply > 20) && (
+                      <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+                        {[
+                          { label: 'Grade B/C Pivot', val: '30%', color: '#d97706' },
+                          { label: 'Margin Retained', val: '68%', color: '#059669' },
+                        ].map(({ label, val, color }) => (
+                          <div key={label} style={{ flex: 1, textAlign: 'center', background: '#fff', borderRadius: 8, padding: '8px 6px', border: '1px solid #fde68a' }}>
+                            <div style={{ fontSize: 10, color: '#8aac98', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' as const, marginBottom: 3 }}>{label}</div>
+                            <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 16, fontWeight: 800, color }}>{val}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right: Dynamic Logistics Matching */}
+                  <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 12, padding: 16 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' as const, color: '#1e40af', marginBottom: 8 }}>
+                      Dynamic Logistics Matching
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 12 }}>
+                      {[
+                        { name: 'Lalamove Cold Chain',  status: 'Available',                              cost: 'RM 120/trip', statusColor: '#059669' },
+                        { name: 'NinjaVan Agri',        status: 'High Demand',                            cost: 'RM 145/trip', statusColor: '#d97706' },
+                        { name: 'GDex Chilled Express', status: portLockDays > 5 ? 'Overloaded' : 'Standby', cost: 'RM 138/trip', statusColor: portLockDays > 5 ? '#ef4444' : '#8aac98' },
+                      ].map(provider => (
+                        <div key={provider.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#fff', padding: '9px 12px', borderRadius: 8, border: '1px solid #e0eeff' }}>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: '#1a3a28' }}>{provider.name}</span>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: 10, color: provider.statusColor, fontWeight: 700 }}>{provider.status}</div>
+                            <div style={{ fontSize: 11, color: '#6b7280', fontFamily: "'JetBrains Mono',monospace" }}>{provider.cost}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {portLockDays > 5 && (
+                      <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '9px 11px', fontSize: 11, color: '#991b1b', lineHeight: 1.6 }}>
+                        ⚠ Port lockdown ({portLockDays}d active) — reroute cold-chain volume to land freight.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 16 }}>
                 {[
                   { label: 'Current Risk Exposure', val: stressEvent ? `RM ${Math.abs(stressEvent.loss).toLocaleString()}` : 'RM 0', sub: stressEvent ? '↓ Stress event active' : 'No active stress event', ok: !stressEvent },
-                  { label: 'Hedge Coverage',        val: '40%',  sub: '↑ Pre-sale price lock',         ok: true },
+                  { label: 'Hedge Coverage',        val: '40%',  sub: '↑ Pre-sale price lock',          ok: true },
                   { label: 'Market Win Rate',       val: '67%',  sub: 'Based on Monte Carlo simulation', ok: true },
                 ].map(({ label, val, sub, ok }) => (
                   <div key={label} style={{ ...card, padding: '18px 20px' }}>
@@ -1451,13 +1770,23 @@ export default function BioFinOracle() {
                   <label style={{ fontSize: 11, color: '#8aac98', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' as const, display: 'block', marginBottom: 8 }}>Monthly Staff Salary (RM)</label>
                   <input type="number" value={staffSalary} onChange={e => setStaffSalary(+e.target.value)} />
                 </div>
+                {/* FIX #1: ROI formula corrected
+                    Old: payback = 500/staffSalary (WRONG — divides by full salary, not savings)
+                    New: payback = systemCost / monthlySavings = 500 / (staffSalary * 0.15)
+                    Old: annualizedROI = (500/staffSalary/12)*100 (WRONG)
+                    New: annualizedROI = (monthlySavings / systemCost) * 100
+                */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                  {[
-                    { label: 'Payback Period',      val: `${(500 / staffSalary).toFixed(1)} months`, color: '#059669' },
-                    { label: 'Annualized ROI',      val: `${((500 / staffSalary / 12) * 100).toFixed(0)}%`, color: '#3b82f6' },
-                    { label: 'Monthly Labor Savings', val: `RM ${(staffSalary * 0.15).toFixed(0)}`, color: '#7c3aed' },
-                    { label: 'Efficiency Gain',     val: '+32%', color: '#d97706' },
-                  ].map(({ label, val, color }) => (
+                  {(() => {
+                    const monthlySavings = staffSalary * 0.15;  // 15% of salary saved via automation
+                    const systemCost     = 500;                  // RM/month system subscription
+                    return [
+                      { label: 'Payback Period',       val: `${(systemCost / monthlySavings).toFixed(1)} months`, color: '#059669' },
+                      { label: 'Annualized ROI',        val: `${((monthlySavings / systemCost) * 100).toFixed(0)}%`, color: '#3b82f6' },
+                      { label: 'Monthly Labor Savings', val: `RM ${monthlySavings.toFixed(0)}`, color: '#7c3aed' },
+                      { label: 'Efficiency Gain',       val: '+32%', color: '#d97706' },
+                    ];
+                  })().map(({ label, val, color }) => (
                     <div key={label} style={{ background: '#f6faf8', border: '1px solid #e4ede8', borderRadius: 12, padding: '14px', textAlign: 'center' }}>
                       <div style={{ fontSize: 10, color: '#8aac98', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' as const, marginBottom: 7 }}>{label}</div>
                       <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 19, fontWeight: 700, color }}>{val}</div>
@@ -1467,7 +1796,7 @@ export default function BioFinOracle() {
                 <div style={{ background: '#edfaf4', border: '1px solid #a7f3d0', borderRadius: 12, padding: '14px 16px' }}>
                   <div style={{ fontSize: 11, color: '#059669', fontWeight: 700, marginBottom: 6 }}>System Value Summary</div>
                   <p style={{ fontSize: 12.5, color: '#4d7a62', lineHeight: 1.7, margin: 0 }}>
-                    At a base salary of RM {staffSalary.toLocaleString()}/month, BioFin Oracle delivers full ROI in <strong style={{ color: '#059669' }}>{(500 / staffSalary).toFixed(1)} months</strong> and generates a sustained annualized return of <strong style={{ color: '#059669' }}>{((500 / staffSalary / 12) * 100).toFixed(0)}%</strong>.
+                    At a base salary of RM {staffSalary.toLocaleString()}/month, BioFin Oracle automates 15% of manual labor (RM {(staffSalary * 0.15).toFixed(0)}/mo saved) against a RM 500/mo system cost, delivering full ROI in <strong style={{ color: '#059669' }}>{(500 / (staffSalary * 0.15)).toFixed(1)} months</strong> and a sustained annualized return of <strong style={{ color: '#059669' }}>{((staffSalary * 0.15 / 500) * 100).toFixed(0)}%</strong>.
                   </p>
                 </div>
               </div>
@@ -1478,10 +1807,11 @@ export default function BioFinOracle() {
         {/* ── Footer ── */}
         <footer style={{ background: '#fff', borderTop: '1px solid #e4ede8', padding: '12px 32px', display: 'flex', justifyContent: 'space-around', alignItems: 'center', flexShrink: 0 }}>
           {[
-            { label: 'Projected Profit',     val: `RM ${animatedProfit.toLocaleString()}`, color: stats.profit < 0 ? '#ef4444' : '#0f2d1e' },
-            { label: 'Waste Reduced',        val: `-${stats.waste}%`,                      color: '#059669' },
-            { label: 'Decision Confidence',  val: `${stats.confidence}%`,                  color: '#3b82f6' },
-            { label: 'Cash Runway',          val: `${adjustedRunway} days`,                color: runwayColor },
+            { label: 'Projected Profit',    val: `RM ${animatedProfit.toLocaleString()}`, color: stats.profit < 0 ? '#ef4444' : '#0f2d1e' },
+            { label: 'Waste Reduced',       val: `-${stats.waste}%`,                      color: '#059669' },
+            { label: 'Decision Confidence', val: `${stats.confidence}%`,                  color: '#3b82f6' },
+            { label: 'Cash Runway',         val: `${adjustedRunway} days`,                color: runwayColor },
+            { label: 'Risk Index',          val: derivedRiskLevel,                        color: riskColor },
           ].map(({ label, val, color }, i) => (
             <React.Fragment key={label}>
               {i > 0 && <div style={{ width: 1, height: 26, background: '#e4ede8' }} />}
