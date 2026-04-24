@@ -19,58 +19,10 @@ import { Line } from 'react-chartjs-2';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Filler, Legend);
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface AnalysisResult {
-  bioFertReduction: number;
-  bioIrrigation: number;
-  inputs: { fert: number; labor: number };
-  loanRate: number;
-  plantHealth: {
-    bioHealthIndex: number;
-    gradeARatio: number;
-    gradeBRatio: number;
-    expectedLifespan: number;
-    soilPH: number;
-    soilMoisture: number;
-    npk: {
-      nitrogen:   { ppm: number; pct: number };
-      phosphorus: { ppm: number; pct: number };
-      potassium:  { ppm: number; pct: number };
-    };
-  };
-  environment: {
-    avgTemp: number; avgHumidity: number; solarRadiation: number;
-    windSpeed: number; pressure: number; co2: number;
-  };
-  weatherRisk: 'rain' | 'drought' | 'wind' | null;
-  weatherDetails: {
-    avgRainfall: number; avgTempMax: number; maxWindSpeed: number;
-    forecast: { day: string; emoji: string; temp: string; alert: boolean }[];
-  };
-  financial: {
-    expectedProfit: number; cashRunway: number;
-    fertCost: number; laborCost: number; weatherLoss: number;
-    suggestedLoanRate: number; pricePerKg?: number;
-  };
-  // FIX #12: Sales insights from route.ts v2.1
-  salesInsights?: {
-    avgPricePerKg: number; avgVolumeKg: number;
-    priceVolatilityPct: number; minPrice: number; maxPrice: number;
-    dominantChannel: string; hasData: boolean;
-    unsalableRisk?: boolean;
-    alternativeStrategy?: string | null;
-  };
-  compliance: { label: string; status: string; detail: string }[];
-  recommendation: string;
-  // Live Tavily search results passed through from backend (Defect 2 fix)
-  marketNews?: { query: string; title: string; snippet: string; url: string }[];
-  summary: {
-    totalDataPoints: number; plantGrowthRecords: number;
-    envRecords: number; weatherRecords: number; salesRecords?: number;
-    overallHealthScore: number; riskLevel: string; filesUploaded: number;
-  };
-}
+// ─── Shared Type Contracts ────────────────────────────────────────────────────
+// Single source of truth — imported from @/types/biofin so frontend and
+// backend interfaces can never silently drift apart.
+import type { SSEStageEvent, SSEErrorEvent, AnalysisResult } from '@/types/biofin';
 
 // ─── Utility Hooks & Components ───────────────────────────────────────────────
 
@@ -168,6 +120,72 @@ function HealthGauge({ value, size = 80 }: { value: number; size?: number }) {
       <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', paddingBottom: 4 }}>
         <span style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 16, fontWeight: 800, color, lineHeight: 1 }}>{value}</span>
         <span style={{ fontSize: 9, color: '#8aac98', fontWeight: 600 }}>/100</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── SSE Pipeline Progress Component ─────────────────────────────────────────
+
+const stageIcons: Record<SSEStageEvent['stage'], React.ReactNode> = {
+  parsing:    <FileText size={14} color="#059669" />,
+  summarising:<Activity size={14} color="#3b82f6" />,
+  searching:  <Globe size={14} color="#d97706" />,
+  analyzing:  <Zap size={14} color="#7c3aed" />,
+  sanitising: <ShieldCheck size={14} color="#059669" />,
+};
+
+const stageLabels: Record<SSEStageEvent['stage'], string> = {
+  parsing:     'Parsing',
+  summarising: 'Summarising',
+  searching:   'Market Search',
+  analyzing:   'AI Analysis',
+  sanitising:  'Validation',
+};
+
+function PipelineProgress({ progress, message, detail, stage: currentStage }: {
+  progress: number; message: string; detail?: string; stage: SSEStageEvent['stage'];
+}) {
+  const stages: SSEStageEvent['stage'][] = ['parsing','summarising','searching','analyzing','sanitising'];
+  const stageIdx = stages.indexOf(currentStage);
+  return (
+    <div style={{ background: '#fff', border: '1px solid #a7f3d0', borderRadius: 20, padding: '28px 32px', marginBottom: 28 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16 }}>
+        <div style={{ width: 52, height: 52, borderRadius: '50%', border: '3px solid #e4ede8', borderTop: '3px solid #059669', animation: 'spin 0.9s linear infinite', flexShrink: 0 }} />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 15, fontWeight: 700, color: '#0f2d1e', marginBottom: 6 }}>{message}</div>
+          {detail && <div style={{ fontSize: 11.5, color: '#8aac98', marginBottom: 8, fontFamily: "'JetBrains Mono',monospace" }}>{detail}</div>}
+          <div style={{ height: 6, background: '#e4ede8', borderRadius: 3, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${progress}%`, background: 'linear-gradient(90deg, #059669, #34d399)', borderRadius: 3, transition: 'width 0.5s ease' }} />
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontSize: 10, color: '#8aac98', fontFamily: "'JetBrains Mono',monospace" }}>
+            <span>Initializing</span>
+            <span style={{ color: '#059669', fontWeight: 700 }}>{progress}%</span>
+            <span>Complete</span>
+          </div>
+        </div>
+      </div>
+      <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+        {stages.map((s, i) => {
+          const done = i < stageIdx;
+          const active = i === stageIdx;
+          return (
+            <div key={s} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+              <div style={{
+                width: 28, height: 28, borderRadius: '50%',
+                background: done ? '#059669' : active ? '#edfaf4' : '#f6faf8',
+                border: `2px solid ${done ? '#059669' : active ? '#059669' : '#e4ede8'}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                transition: 'all 0.3s ease',
+              }}>
+                {done ? <CheckCircle2 size={13} color="#fff" /> : stageIcons[s]}
+              </div>
+              <span style={{ fontSize: 9, fontWeight: 700, color: done ? '#059669' : active ? '#059669' : '#8aac98', letterSpacing: '0.06em', textTransform: 'uppercase' as const }}>
+                {stageLabels[s]}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -307,9 +325,28 @@ export default function BioFinOracle() {
   // ── Page routing ────────────────────────────────────────────────────────────
   const [currentPage, setCurrentPage] = useState<'upload' | 'dashboard'>('upload');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [processingStep, setProcessingStep] = useState(0);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
+
+  // Concern D fix: track mount status and hold a ref to any in-flight SSE
+  // AbortController so we can cancel it and skip state updates if the
+  // component unmounts mid-stream (e.g. React StrictMode double-invocation,
+  // navigation away, or hot-reload).
+  const mountedRef  = useRef(true);
+  const sseAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      sseAbortRef.current?.abort();
+    };
+  }, []);
+
+  // ── SSE pipeline state ───────────────────────────────────────────────────────
+  const [pipelineProgress, setPipelineProgress] = useState(0);
+  const [pipelineMessage, setPipelineMessage] = useState('');
+  const [pipelineDetail, setPipelineDetail] = useState<string | undefined>();
+  const [pipelineStage, setPipelineStage] = useState<SSEStageEvent['stage']>('parsing');
 
   // ── File upload state ────────────────────────────────────────────────────────
   const [envGeoFiles,    setEnvGeoFiles]    = useState<File[]>([]);  // Cat 1: Environmental & Geospatial
@@ -324,7 +361,7 @@ export default function BioFinOracle() {
   const [staffSalary, setStaffSalary] = useState(3400);
   const [isAuditing, setIsAuditing]   = useState(false);
   const [auditDone, setAuditDone]     = useState(false);
-  const [stressEvent, setStressEvent] = useState<{ id: string; title: string; loss: number; impact: string } | null>(null);
+  const [stressEvent, setStressEvent] = useState<{ id: string; title: string; loss: number; impact: string; recoveryStrategy?: string } | null>(null);
   const [now, setNow]                 = useState(new Date());
   const [actionExecuted, setActionExecuted] = useState(false);
 
@@ -355,36 +392,28 @@ export default function BioFinOracle() {
     return () => clearTimeout(t);
   }, [terminalStep, activeTab]);
 
-  // ── Execute handler ──────────────────────────────────────────────────────────
-  const processingSteps = [
-    'Uploading data files…',
-    'Parsing CSV records…',
-    'Running bio-health analysis…',
-    'Computing financial projections…',
-    'Generating AI recommendations…',
-    'Preparing dashboard…',
-  ];
+  // ── Execute handler — SSE streaming ─────────────────────────────────────────
 
   const handleExecute = useCallback(async () => {
     setIsProcessing(true);
     setApiError(null);
-    setProcessingStep(0);
-
-    for (let i = 1; i <= 5; i++) {
-      await new Promise(r => setTimeout(r, 320 + i * 80));
-      setProcessingStep(i);
-    }
+    setPipelineProgress(0);
+    setPipelineMessage('Connecting to analysis pipeline…');
+    setPipelineDetail(undefined);
+    setPipelineStage('parsing');
 
     try {
       const fd = new FormData();
-      // Append all files for each category under the same key (getAll on the server)
-      envGeoFiles.forEach(f    => fd.append('envGeoData',     f));
-      bioCropFiles.forEach(f   => fd.append('bioCropData',    f));
+      envGeoFiles.forEach(f     => fd.append('envGeoData',     f));
+      bioCropFiles.forEach(f    => fd.append('bioCropData',    f));
       operationsFiles.forEach(f => fd.append('operationsData', f));
       financialFiles.forEach(f  => fd.append('financialData',  f));
 
+      // Concern D fix: store the controller on the ref so the cleanup effect
+      // in useEffect can abort it if the component unmounts mid-stream.
       const controller = new AbortController();
-      const fetchTimeout = setTimeout(() => controller.abort(), 150_000);
+      sseAbortRef.current = controller;
+      const fetchTimeout = setTimeout(() => controller.abort(), 300_000);
       let res: Response;
       try {
         res = await fetch('/api/analyze', { method: 'POST', body: fd, signal: controller.signal });
@@ -392,33 +421,105 @@ export default function BioFinOracle() {
         clearTimeout(fetchTimeout);
       }
 
-      // Guard: if server returned HTML (timeout/error page), show a clear message
       const contentType = res.headers.get('content-type') ?? '';
-      if (!contentType.includes('application/json')) {
-        throw new Error('Server returned a non-JSON response. The analysis service may be temporarily unavailable — please try again.');
+      if (!contentType.includes('text/event-stream')) {
+        throw new Error('Server did not return an SSE stream. The analysis service may be temporarily unavailable — please try again.');
       }
 
-      const data: AnalysisResult = await res.json();
+      if (!res.body) {
+        throw new Error('ReadableStream not supported in this browser.');
+      }
 
-      if (!res.ok) throw new Error((data as any).error || 'Server error');
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
 
-      setAnalysisResult(data);
-      setInputs(data.inputs);
-      setBioFertReduction(data.bioFertReduction);
-      setBioIrrigation(data.bioIrrigation);
-      setLoanRate(data.loanRate);
-      if (data.weatherRisk) setWeatherEvent2(data.weatherRisk);
+      while (true) {
+        const { done, value } = await reader.read();
+        // Concern D: stop reading if the component has unmounted
+        if (done || controller.signal.aborted) break;
+
+        buffer += decoder.decode(value, { stream: true });
+
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        let currentEvent = '';
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith('data: ')) {
+            const jsonStr = line.slice(6);
+            try {
+              const payload = JSON.parse(jsonStr);
+
+              // Concern D: never call setState on an unmounted component
+              if (!mountedRef.current) break;
+
+              if (currentEvent === 'stage') {
+                const s = payload as SSEStageEvent;
+                setPipelineStage(s.stage);
+                setPipelineProgress(s.progress);
+                setPipelineMessage(s.message);
+                setPipelineDetail(s.detail);
+              } else if (currentEvent === 'error') {
+                const e = payload as SSEErrorEvent;
+                if (!e.fallback) {
+                  throw new Error(e.message);
+                }
+                // Fallback: we'll still get a 'complete' event with safe defaults
+              } else if (currentEvent === 'complete') {
+                const data = payload as AnalysisResult;
+                setAnalysisResult(data);
+                setInputs(data.inputs);
+                setBioFertReduction(data.bioFertReduction);
+                setBioIrrigation(data.bioIrrigation);
+                setLoanRate(data.loanRate);
+                // Bug #3 fix: always set weatherEvent2 — even if null — so stale
+                // data from a previous upload doesn't persist after a re-upload.
+                setWeatherEvent2(data.weatherRisk);
+                setPipelineProgress(100);
+                setPipelineMessage('Analysis complete — launching dashboard…');
+                setPipelineDetail(undefined);
+              }
+            } catch (parseErr) {
+              // Not JSON or malformed — skip (could be a keepalive comment remnant)
+            }
+            currentEvent = '';
+          }
+          // SSE comments (keepalive lines starting with ':') are ignored
+        }
+      }
+
+      // Handle any remaining data in buffer
+      if (buffer.startsWith('data: ') && mountedRef.current) {
+        const jsonStr = buffer.slice(6);
+        try {
+          const payload = JSON.parse(jsonStr);
+          if (payload && 'bioFertReduction' in payload) {
+            const data = payload as AnalysisResult;
+            setAnalysisResult(data);
+            setInputs(data.inputs);
+            setBioFertReduction(data.bioFertReduction);
+            setBioIrrigation(data.bioIrrigation);
+            setLoanRate(data.loanRate);
+            setWeatherEvent2(data.weatherRisk); // Bug #3 fix: unconditional
+            if (data.financial?.laborCost) setStaffSalary(data.financial.laborCost);
+          }
+        } catch { /* ignore */ }
+      }
 
     } catch (err) {
+      if (!mountedRef.current) return;
       const msg = err instanceof DOMException && err.name === 'AbortError'
         ? 'Analysis request timed out. The AI service may be overloaded — please try again.'
-        : String(err);
+        : (err instanceof Error ? err.message : String(err));
       setApiError(msg);
       setIsProcessing(false);
       return;
     }
 
-    setProcessingStep(5);
+    if (!mountedRef.current) return;
     await new Promise(r => setTimeout(r, 400));
     setIsProcessing(false);
     setCurrentPage('dashboard');
@@ -472,7 +573,13 @@ export default function BioFinOracle() {
   const delayLoss   = Math.round(shipDelay * 420 + shipDelay * thaiSupply * 35);
   const supplyLabel = `${localRatio}% : ${sgRatio}% : ${hkRatio}%`;
 
-  const adjustedRunway = Math.max(18, Math.round(142 - (loanRate - 5) * 5.5 - laborIncrease * 1.8 - paymentDelay * 0.55));
+  // Bug #1 fix: anchor the runway calculation to the AI's computed cashRunway.
+  // Both the Header badge and the Footer KPI now derive from the same base value
+  // so they can never show different numbers for the same concept.
+  const aiCashRunway   = analysisResult?.financial.cashRunway ?? 142;
+  const adjustedRunway = Math.max(18, Math.round(
+    aiCashRunway - (loanRate - 5) * 5.5 - laborIncrease * 1.8 - paymentDelay * 0.55
+  ));
   const runwayColor    = adjustedRunway >= 120 ? '#059669' : adjustedRunway >= 70 ? '#d97706' : '#ef4444';
   const financingMonth = adjustedRunway < 120 ? Math.ceil(adjustedRunway / 30) : null;
   const totalCashBurn  = Math.round((loanRate - 5) * 800 + laborIncrease * 600 + paymentDelay * 250);
@@ -555,11 +662,18 @@ export default function BioFinOracle() {
     },
   };
 
-  const stressEvents = [
-    { id: 'port',  title: 'Port Klang 7-Day Logistics Disruption',     loss: -15000, impact: 'Logistics disruption · Direct loss RM 15,000' },
-    { id: 'flood', title: 'Extreme Rainfall · Farmland Flooded 3 Days', loss: -22000, impact: '40% yield loss · Estimated loss RM 22,000' },
-    { id: 'thai',  title: 'Thai Dumping · Market Premium Eliminated',   loss:  -9500, impact: 'Price drop RM 8/kg · Loss RM 9,500' },
-    { id: 'pest',  title: 'Pest Outbreak · Emergency Spray',            loss:  -6000, impact: 'Pesticide costs surge · Loss RM 6,000' },
+  // Dynamic stress tests — driven by LLM output, with fallback placeholders
+  const stressEvents = analysisResult?.dynamicIntelligence?.stressTests?.map(s => ({
+    id: s.id,
+    title: s.title,
+    loss: s.lossEstimate,
+    impact: s.impact,
+    recoveryStrategy: s.recoveryStrategy,
+  })) ?? [
+    { id: 'port',  title: 'Port Klang 7-Day Logistics Disruption',     loss: -15000, impact: 'Logistics disruption · Direct loss RM 15,000', recoveryStrategy: 'Activate Singapore pre-sale price lock immediately, notify Johor cooperative for joint procurement hedge.' },
+    { id: 'flood', title: 'Extreme Rainfall · Farmland Flooded 3 Days', loss: -22000, impact: '40% yield loss · Estimated loss RM 22,000', recoveryStrategy: 'Trigger crop insurance claim, accelerate drainage maintenance, shift harvest schedule forward 48h.' },
+    { id: 'thai',  title: 'Thai Dumping · Market Premium Eliminated',   loss:  -9500, impact: 'Price drop RM 8/kg · Loss RM 9,500', recoveryStrategy: 'Pivot 30% Grade B/C to F&B processing, lock Hong Kong premium channel contracts.' },
+    { id: 'pest',  title: 'Pest Outbreak · Emergency Spray',            loss:  -6000, impact: 'Pesticide costs surge · Loss RM 6,000', recoveryStrategy: 'Deploy integrated pest management, pre-negotiate bulk pesticide pricing with suppliers.' },
   ];
 
   const complianceItems = analysisResult?.compliance ?? [
@@ -577,12 +691,33 @@ export default function BioFinOracle() {
     { role: 'CMO', icon: '📊', cond: !!stressEvent, warn: 'External stress event triggered. Recommend immediately activating Singapore pre-sale price lock.', ok: 'Market supply and demand stable. Seize the current shipping window.' },
   ];
 
-  const terminalLines = [
-    { prefix: '[> Sensory_Agent]',    color: '#34d399', text: 'Soil Moisture: 88%. Analyzing weather API...' },
-    { prefix: '[> Risk_Agent]',       color: '#f97316', text: 'Alert: 85% Storm Probability on Apr 22.' },
-    { prefix: '[> Market_Agent]',     color: '#a78bfa', text: 'Cross-referencing: Thai supply +15k tons arriving next week. Model predicts 12% price drop.' },
-    { prefix: '» Causal Conclusion:', color: '#34d399', text: 'Accelerating harvest by 48H preserves 80% Grade A premium. Generating execution protocol ...' },
-  ];
+  // Bug #4 & #5 fix: terminal lines now reflect actual AI output when available.
+  // Static demo strings show only on first load before any analysis is run.
+  const terminalLines = useMemo(() => [
+    {
+      prefix: '[> Sensory_Agent]', color: '#34d399',
+      text: analysisResult
+        ? `Soil Moisture: ${analysisResult.plantHealth.soilMoisture}%. pH: ${analysisResult.plantHealth.soilPH.toFixed(1)}. Bio-Health Index: ${analysisResult.plantHealth.bioHealthIndex}/100.`
+        : 'Soil Moisture: 88%. Analyzing weather API...',
+    },
+    {
+      prefix: '[> Risk_Agent]', color: '#f97316',
+      text: analysisResult
+        ? `Risk Level: ${analysisResult.summary.riskLevel}. Weather signal: ${analysisResult.weatherRisk ?? 'none'}. Suggested loan rate: ${analysisResult.financial.suggestedLoanRate}%.`
+        : 'Alert: 85% Storm Probability on Apr 22.',
+    },
+    {
+      prefix: '[> Market_Agent]', color: '#a78bfa',
+      text: analysisResult
+        ? `Price: RM ${analysisResult.financial.pricePerKg}/kg via ${analysisResult.salesInsights.dominantChannel}. Base revenue: RM ${analysisResult.financial.baseRevenue.toLocaleString()}.`
+        : 'Cross-referencing: Thai supply +15k tons arriving next week. Model predicts 12% price drop.',
+    },
+    {
+      prefix: '» Causal Conclusion:', color: '#34d399',
+      text: analysisResult?.recommendation
+        ?? 'Accelerating harvest by 48H preserves 80% Grade A premium. Generating execution protocol ...',
+    },
+  ], [analysisResult]);
 
   const card: React.CSSProperties = { background: '#fff', border: '1px solid #e4ede8', borderRadius: 20, padding: 24 };
 
@@ -795,22 +930,14 @@ export default function BioFinOracle() {
               </div>
             )}
 
-            {/* Processing overlay */}
+            {/* Processing overlay — SSE pipeline progress */}
             {isProcessing && (
-              <div style={{ background: '#fff', border: '1px solid #a7f3d0', borderRadius: 20, padding: '28px 32px', marginBottom: 28, display: 'flex', alignItems: 'center', gap: 28 }}>
-                <div style={{ width: 52, height: 52, borderRadius: '50%', border: '3px solid #e4ede8', borderTop: '3px solid #059669', animation: 'spin 0.9s linear infinite', flexShrink: 0 }} />
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: '#0f2d1e', marginBottom: 10 }}>{processingSteps[processingStep]}</div>
-                  <div style={{ height: 6, background: '#e4ede8', borderRadius: 3, overflow: 'hidden' }}>
-                    <div style={{ height: '100%', width: `${((processingStep + 1) / processingSteps.length) * 100}%`, background: 'linear-gradient(90deg, #059669, #34d399)', borderRadius: 3, transition: 'width 0.35s ease' }} />
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontSize: 10, color: '#8aac98', fontFamily: "'JetBrains Mono',monospace" }}>
-                    <span>Initializing</span>
-                    <span style={{ color: '#059669', fontWeight: 700 }}>{Math.round(((processingStep + 1) / processingSteps.length) * 100)}%</span>
-                    <span>Complete</span>
-                  </div>
-                </div>
-              </div>
+              <PipelineProgress
+                progress={pipelineProgress}
+                message={pipelineMessage}
+                detail={pipelineDetail}
+                stage={pipelineStage}
+              />
             )}
 
             {/* Execute button */}
@@ -897,10 +1024,10 @@ export default function BioFinOracle() {
               <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 15, fontWeight: 700, color: riskColor, lineHeight: 1.2 }}>{derivedRiskLevel}</div>
             </div>
             <div style={{ width: 1, height: 28, background: '#e4ede8' }} />
-            <div style={{ textAlign: 'center', background: stats.runway < 100 ? '#fffbeb' : '#edfaf4', border: `1px solid ${stats.runway < 100 ? '#fde68a' : '#a7f3d0'}`, borderRadius: 12, padding: '7px 16px' }}>
+            <div style={{ textAlign: 'center', background: adjustedRunway < 100 ? '#fffbeb' : '#edfaf4', border: `1px solid ${adjustedRunway < 100 ? '#fde68a' : '#a7f3d0'}`, borderRadius: 12, padding: '7px 16px' }}>
               <div style={{ fontSize: 10, color: '#8aac98', fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase' }}>Cash Runway</div>
-              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 19, fontWeight: 700, color: stats.runway < 100 ? '#d97706' : '#059669', lineHeight: 1.2 }}>
-                {stats.runway}<span style={{ fontSize: 11, marginLeft: 2, opacity: 0.6 }}>days</span>
+              <div style={{ fontFamily: "'JetBrains Mono',monospace", fontSize: 19, fontWeight: 700, color: adjustedRunway < 100 ? '#d97706' : '#059669', lineHeight: 1.2 }}>
+                {adjustedRunway}<span style={{ fontSize: 11, marginLeft: 2, opacity: 0.6 }}>days</span>
               </div>
             </div>
           </div>
@@ -1372,7 +1499,9 @@ export default function BioFinOracle() {
                 </div>
                 <div style={{ ...card, display: 'flex', flexDirection: 'column' }}>
                   <div style={{ fontSize: 14, fontWeight: 700, color: '#0f2d1e', marginBottom: 4 }}>Profit Distribution</div>
-                  <div style={{ fontSize: 11, color: '#8aac98', marginBottom: 22, fontStyle: 'italic' }}>Simulating 10,000 scenario combinations…</div>
+                  {/* Bug #5 fix: this is a 5-point manually-defined curve, not a
+                      full Monte Carlo simulation. Label it accurately. */}
+                  <div style={{ fontSize: 11, color: '#8aac98', marginBottom: 22, fontStyle: 'italic' }}>Probability Distribution Estimate (5-scenario model)</div>
                   {/* FIX #2 note: bio health penalty now reflected here via stats.profit */}
                   {bioHealthIndex < 75 && (
                     <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, padding: '8px 12px', marginBottom: 12, fontSize: 11.5, color: '#92400e' }}>
@@ -1666,7 +1795,7 @@ export default function BioFinOracle() {
                           </div>
                           <div style={{ marginTop: 10, padding: '10px 12px', background: '#fff', borderRadius: 9, border: '1px solid #fecaca' }}>
                             <div style={{ fontSize: 11, color: '#374151', lineHeight: 1.6 }}>
-                              <strong style={{ color: '#059669' }}>AI Response Strategy:</strong> Activate Singapore pre-sale price lock immediately, notify Johor cooperative for joint procurement hedge — recovers est. {Math.round(Math.abs(stressEvent.loss) * 0.35 / 1000)}k in losses.
+                              <strong style={{ color: '#059669' }}>AI Response Strategy:</strong> {stressEvent.recoveryStrategy ?? `Activate Singapore pre-sale price lock immediately, notify Johor cooperative for joint procurement hedge — recovers est. ${Math.round(Math.abs(stressEvent.loss) * 0.35 / 1000)}k in losses.`}
                             </div>
                           </div>
                         </div>
@@ -1678,25 +1807,44 @@ export default function BioFinOracle() {
                 </div>
 
                 <div style={card}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: '#0f2d1e', marginBottom: 18 }}>Competitor Intelligence</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: '#0f2d1e', marginBottom: 18 }}>Competitor Intelligence{analysisResult?.dynamicIntelligence?.competitors ? '' : ' · Awaiting AI Analysis'}</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
-                    {[
-                      { label: 'Thai B League',            status: '⚠ Price War Alert',      color: '#d97706', bg: '#fffbeb',  detail: 'Expected price cut of RM 5–8/kg, covering Singapore & Hong Kong markets.' },
-                      { label: 'Vietnam New Entrant',      status: '● Low Threat',            color: '#059669', bg: '#edfaf4',  detail: 'Quality certification below MyGAPs standard — unlikely to capture premium orders near-term.' },
-                      { label: 'Local Cooperative Alliance',status: '✓ Recommend Lock-in',   color: '#3b82f6', bg: '#eff6ff',  detail: 'Johor cooperative proposes joint procurement — can reduce logistics costs by ~18%.' },
-                    ].map(({ label, status, color, bg, detail }) => (
-                      <div key={label} style={{ background: '#f6faf8', borderRadius: 11, padding: '12px 14px', border: '1px solid #e4ede8' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                          <span style={{ fontSize: 12, fontWeight: 600, color: '#1a3a28' }}>{label}</span>
-                          <span style={{ fontSize: 10, fontWeight: 700, color, background: bg, padding: '2px 9px', borderRadius: 10 }}>{status}</span>
+                    {(analysisResult?.dynamicIntelligence?.competitors ?? [
+                      { name: 'Thai B League',            threatLevel: 'high' as const,   insight: 'Expected price cut of RM 5–8/kg, covering Singapore & Hong Kong markets.', recommendedAction: 'Lock 40% Singapore pre-sale orders.' },
+                      { name: 'Vietnam New Entrant',      threatLevel: 'low' as const,    insight: 'Quality certification below MyGAPs standard — unlikely to capture premium orders near-term.', recommendedAction: 'Monitor certification progress.' },
+                      { name: 'Local Cooperative Alliance',threatLevel: 'medium' as const, insight: 'Johor cooperative proposes joint procurement — can reduce logistics costs by ~18%.', recommendedAction: 'Negotiate joint procurement.' },
+                    ]).map((comp, idx) => {
+                      const threatStyle: Record<string, { status: string; color: string; bg: string }> = {
+                        critical: { status: '⛔ Critical Threat', color: '#ef4444', bg: '#fef2f2' },
+                        high:     { status: '⚠ High Threat',     color: '#d97706', bg: '#fffbeb' },
+                        medium:   { status: '● Medium Threat',   color: '#3b82f6', bg: '#eff6ff' },
+                        low:      { status: '✓ Low Threat',      color: '#059669', bg: '#edfaf4' },
+                      };
+                      const ts = threatStyle[comp.threatLevel] ?? threatStyle.medium;
+                      return (
+                        <div key={`${comp.name}-${idx}`} style={{ background: '#f6faf8', borderRadius: 11, padding: '12px 14px', border: '1px solid #e4ede8' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                            <span style={{ fontSize: 12, fontWeight: 600, color: '#1a3a28' }}>{comp.name}</span>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: ts.color, background: ts.bg, padding: '2px 9px', borderRadius: 10 }}>{ts.status}</span>
+                          </div>
+                          <p style={{ fontSize: 12, color: '#6b8f7e', lineHeight: 1.6, margin: 0 }}>{comp.insight}</p>
+                          {comp.recommendedAction && (
+                            <div style={{ marginTop: 6, fontSize: 11, color: '#059669', fontWeight: 600 }}>→ {comp.recommendedAction}</div>
+                          )}
                         </div>
-                        <p style={{ fontSize: 12, color: '#6b8f7e', lineHeight: 1.6, margin: 0 }}>{detail}</p>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                   <div style={{ marginTop: 16, background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 12, padding: '13px 16px' }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: '#1e40af', marginBottom: 5 }}>AI Hedging Strategy Recommendation</div>
-                    <p style={{ fontSize: 12.5, color: '#374151', lineHeight: 1.6, margin: 0 }}>Immediately lock <strong style={{ color: '#1e40af' }}>40%</strong> Singapore pre-sale orders and launch Johor joint procurement negotiations — building a dual price moat.</p>
+                    <p style={{ fontSize: 12.5, color: '#374151', lineHeight: 1.6, margin: 0 }}>
+                      {analysisResult?.dynamicIntelligence?.competitors?.length
+                        ? analysisResult.dynamicIntelligence.competitors
+                            .filter(c => c.threatLevel === 'high' || c.threatLevel === 'critical')
+                            .map(c => c.recommendedAction)
+                            .join(' ') || 'No high-threat competitors detected — maintain current market positioning and monitor for changes.'
+                        : 'Immediately lock 40% Singapore pre-sale orders and launch Johor joint procurement negotiations — building a dual price moat.'}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -1829,24 +1977,23 @@ export default function BioFinOracle() {
                   <span style={{ fontSize: 14, fontWeight: 700, color: '#0f2d1e' }}>Automated ROI Estimator</span>
                 </div>
                 <div>
-                  <label style={{ fontSize: 11, color: '#8aac98', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' as const, display: 'block', marginBottom: 8 }}>Monthly Staff Salary (RM)</label>
+                  <label style={{ fontSize: 11, color: '#8aac98', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' as const, display: 'block', marginBottom: 8 }}>Monthly Staff Salary (RM){analysisResult?.financial.laborCost ? ' · Pre-filled from your data' : ''}</label>
                   <input type="number" value={staffSalary} onChange={e => setStaffSalary(+e.target.value)} />
                 </div>
-                {/* FIX #1: ROI formula corrected
-                    Old: payback = 500/staffSalary (WRONG — divides by full salary, not savings)
-                    New: payback = systemCost / monthlySavings = 500 / (staffSalary * 0.15)
-                    Old: annualizedROI = (500/staffSalary/12)*100 (WRONG)
-                    New: annualizedROI = (monthlySavings / systemCost) * 100
-                */}
+                {/* ROI formula: payback = systemCost / monthlySavings; annualizedROI = (monthlySavings / systemCost) * 100 */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   {(() => {
-                    const monthlySavings = staffSalary * 0.15;  // 15% of salary saved via automation
-                    const systemCost     = 500;                  // RM/month system subscription
+                    const effectiveSalary = analysisResult?.financial.laborCost ?? staffSalary;
+                    const monthlySavings  = effectiveSalary * 0.15;
+                    const systemCost      = 500;
+                    const efficiencyGain  = analysisResult?.plantHealth.bioHealthIndex
+                      ? Math.round(20 + (analysisResult.plantHealth.bioHealthIndex - 50) * 0.3)
+                      : 32;
                     return [
                       { label: 'Payback Period',       val: `${(systemCost / monthlySavings).toFixed(1)} months`, color: '#059669' },
                       { label: 'Annualized ROI',        val: `${((monthlySavings / systemCost) * 100).toFixed(0)}%`, color: '#3b82f6' },
                       { label: 'Monthly Labor Savings', val: `RM ${monthlySavings.toFixed(0)}`, color: '#7c3aed' },
-                      { label: 'Efficiency Gain',       val: '+32%', color: '#d97706' },
+                      { label: 'Efficiency Gain',       val: `+${efficiencyGain}%`, color: '#d97706' },
                     ];
                   })().map(({ label, val, color }) => (
                     <div key={label} style={{ background: '#f6faf8', border: '1px solid #e4ede8', borderRadius: 12, padding: '14px', textAlign: 'center' }}>
@@ -1858,7 +2005,14 @@ export default function BioFinOracle() {
                 <div style={{ background: '#edfaf4', border: '1px solid #a7f3d0', borderRadius: 12, padding: '14px 16px' }}>
                   <div style={{ fontSize: 11, color: '#059669', fontWeight: 700, marginBottom: 6 }}>System Value Summary</div>
                   <p style={{ fontSize: 12.5, color: '#4d7a62', lineHeight: 1.7, margin: 0 }}>
-                    At a base salary of RM {staffSalary.toLocaleString()}/month, BioFin Oracle automates 15% of manual labor (RM {(staffSalary * 0.15).toFixed(0)}/mo saved) against a RM 500/mo system cost, delivering full ROI in <strong style={{ color: '#059669' }}>{(500 / (staffSalary * 0.15)).toFixed(1)} months</strong> and a sustained annualized return of <strong style={{ color: '#059669' }}>{((staffSalary * 0.15 / 500) * 100).toFixed(0)}%</strong>.
+                    {(() => {
+                      const effectiveSalary = analysisResult?.financial.laborCost ?? staffSalary;
+                      const savings = effectiveSalary * 0.15;
+                      const payback = (500 / savings).toFixed(1);
+                      const roi = ((savings / 500) * 100).toFixed(0);
+                      const source = analysisResult?.financial.laborCost ? 'your uploaded financial data' : 'the default estimate';
+                      return `Based on ${source}, at RM ${effectiveSalary.toLocaleString()}/month labor cost, BioFin Oracle automates 15% of manual labor (RM ${savings.toFixed(0)}/mo saved) against a RM 500/mo system cost, delivering full ROI in ${payback} months and a sustained annualized return of ${roi}%.`;
+                    })()}
                   </p>
                 </div>
               </div>
