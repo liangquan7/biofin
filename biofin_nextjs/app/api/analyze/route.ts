@@ -528,7 +528,7 @@ function analyzeFinancialData(rows: FinancialRecord[]): {
   return { unsalableRisk, alternativeStrategy };
 }
 
-// --- 真实天气获取 (Open-Meteo) ---
+// --- Real-time weather forecast (Open-Meteo) ---
 async function fetchRealWeatherForecast(lat: number, lng: number) {
   try {
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&daily=temperature_2m_max,precipitation_sum,wind_speed_10m_max&timezone=auto`;
@@ -812,9 +812,9 @@ function repairLLMJson(raw: string): string {
       }
     }
     if (endIdx !== -1) {
-      t = t.slice(s, endIdx + 1); // 精准截取第一个完整的 JSON 对象
+      t = t.slice(s, endIdx + 1); // precisely extract the first complete JSON object
     } else {
-      t = t.slice(s); // 截断输出，交给 Step 9 补全括号
+      t = t.slice(s); // truncated output — Step 9 will close any open brackets
     }
   }
 
@@ -1248,9 +1248,9 @@ function buildUserPrompt(
 
   sections.push(`\n## Live Market Intelligence (Tavily Web Search Results)
 ${intel}`);
-  sections.push(`\n## 实况与未来 7 天天气预报 (真实 API 数据)
+  sections.push(`\n## Live 7-Day Weather Forecast (Real API Data)
   ${realWeatherText}
-  请根据以上天气数据，结合用户的地理位置和作物周期，推导是否存在 "rain"（洪涝/暴雨风险）、"drought"（干旱风险）或 "wind"（风灾风险）。如果没有显著风险，weatherRisk 设为 null。`);
+  Based on the weather data above, combined with the farm's geographic location and crop cycle, determine whether a "rain" (flood/heavy-rain risk), "drought" (dry-spell risk), or "wind" (storm risk) condition exists. If no significant risk is present, set weatherRisk to null.`);
 
   sections.push(`\n## Context
 - Farm: Malaysian Musang King (Durian) operation, likely Pahang/Johor region
@@ -1417,7 +1417,7 @@ export async function POST(request: NextRequest) {
       // ── Stage 1: Parse uploaded files ─────────────────────────────────────
       stage({
         stage:    'parsing',
-        message:  '正在处理上传的文件...',
+        message:  'Processing uploaded files…',
         progress: 8,
       });
 
@@ -1430,36 +1430,36 @@ export async function POST(request: NextRequest) {
       try {
         const formData = await request.formData();
 
-        // 获取各分类文件数组
+        // Read file arrays for each data category
         const envGeoFileArr     = formData.getAll('envGeoData')      as File[];
         const bioCropFileArr    = formData.getAll('bioCropData')     as File[];
         const operationsFileArr = formData.getAll('operationsData')  as File[];
         const financialFileArr  = formData.getAll('financialData')   as File[];
 
-        // 计算包含文件的分类数量
+        // Count how many categories have at least one file
         filesUploaded = [envGeoFileArr, bioCropFileArr, operationsFileArr, financialFileArr]
           .filter(arr => arr.length > 0).length;
 
-        // 🚨 安全检查：限制总上传大小，防止服务器 OOM (内存溢出)
-        const MAX_TOTAL_SIZE_BYTES = 15 * 1024 * 1024; // 15 MB 总计
+        // Security: enforce a 15 MB total upload cap to prevent server OOM
+        const MAX_TOTAL_SIZE_BYTES = 15 * 1024 * 1024; // 15 MB total
         const allFiles = [...envGeoFileArr, ...bioCropFileArr, ...operationsFileArr, ...financialFileArr];
         const totalSize = allFiles.reduce((acc, f) => acc + f.size, 0);
         
         if (totalSize > MAX_TOTAL_SIZE_BYTES) {
           throw new Error(
-            `总上传大小为 ${(totalSize / (1024 * 1024)).toFixed(1)} MB，` +
-            `超过了 15 MB 的总限制。请减少文件数量或压缩文件。`
+            `Total upload size is ${(totalSize / (1024 * 1024)).toFixed(1)} MB, ` +
+            `which exceeds the 15 MB total limit. Please reduce the number of files or compress them.`
           );
         }
 
-        // 定义单文件读取逻辑
+        // Per-file read helper — enforces the 5 MB per-file cap
         const readAllFiles = async (files: File[], imageOk: boolean): Promise<Record<string, string>[]> => {
           for (const f of files) {
-            // 🚨 安全检查：单文件 5MB 限制
+            // Security: enforce 5 MB per-file limit
             if (f.size > MAX_FILE_SIZE_BYTES) {
               throw new Error(
-                `文件 "${f.name}" 大小为 ${(f.size / (1024 * 1024)).toFixed(1)} MB — ` +
-                `超过了单文件 5 MB 的限制。`
+                `File "${f.name}" is ${(f.size / (1024 * 1024)).toFixed(1)} MB — ` +
+                `the per-file limit is 5 MB.`
               );
             }
           }
@@ -1469,7 +1469,7 @@ export async function POST(request: NextRequest) {
           return results.flat();
         };
 
-        // 并行解析所有分类
+        // Parse all four categories in parallel
         [envGeoRows, bioCropRows, operationsRows, financialRows] = await Promise.all([
           envGeoFileArr.length     ? readAllFiles(envGeoFileArr,     true)  : Promise.resolve([]),
           bioCropFileArr.length    ? readAllFiles(bioCropFileArr,    true)  : Promise.resolve([]),
@@ -1479,24 +1479,25 @@ export async function POST(request: NextRequest) {
 
         stage({
           stage:    'parsing',
-          message:  `已解析 ${filesUploaded} 个分类 — 共 ${envGeoRows.length + bioCropRows.length + operationsRows.length + financialRows.length} 条记录`,
+          message:  `Parsed ${filesUploaded} categor${filesUploaded === 1 ? 'y' : 'ies'} — ${envGeoRows.length + bioCropRows.length + operationsRows.length + financialRows.length} records total`,
           progress: 18,
-          detail:   `环境:${envGeoRows.length} 作物:${bioCropRows.length} 操作:${operationsRows.length} 财务:${financialRows.length}`,
+          detail:   `EnvGeo:${envGeoRows.length} BioCrop:${bioCropRows.length} Operations:${operationsRows.length} Financial:${financialRows.length}`,
         });
 
       } catch (parseErr) {
         const errorMessage = String(parseErr).replace('Error: ', '');
         console.error('[BioFin] File parse error:', errorMessage);
 
-        // ── 方案 A 关键逻辑 ──
-        // 1. 发送错误事件，fallback 设为 false 触发前端 throw Error
+        // Critical path:
+        // 1. Emit an error event with fallback:false so the frontend throws and
+        //    stays on the upload screen rather than opening the dashboard.
         emit('error', {
           message: errorMessage,
-          fallback: false, // 阻止前端进入 Dashboard
+          fallback: false, // prevents frontend from navigating to dashboard
         } satisfies SSEErrorEvent);
 
-        // 2. 立即结束并关闭流，不再发送 'complete' 事件
-        // 这样前端会捕获异常并停留在上传页面显示红色错误条
+        // 2. Close the stream immediately — no 'complete' event is emitted,
+        //    so the frontend will surface the red error banner.
         controller.close();
         return;
       }
@@ -1532,7 +1533,7 @@ export async function POST(request: NextRequest) {
       });
 
       let realWeatherDetails = null;
-      let weatherPromptText = '未获取到有效天气数据。';
+      let weatherPromptText = 'No weather data retrieved — proceed with defaults.';
 
       const targetLat = envGeo?.latitude ?? 3.15;
       const targetLng = envGeo?.longitude ?? 101.7;
@@ -1553,8 +1554,8 @@ export async function POST(request: NextRequest) {
 
       realWeatherDetails = weatherResult;
       if (realWeatherDetails) {
-        weatherPromptText = `未来 7 天平均最高温 ${realWeatherDetails.avgTempMax}°C, 最大风速 ${realWeatherDetails.maxWindSpeed}km/h。
-详细预测：${realWeatherDetails.forecast.map((f: { day: string; temp: string; emoji: string; alert: boolean }) => `${f.day}: ${f.temp} ${f.emoji} ${f.alert ? '(警报)' : ''}`).join(', ')}`;
+        weatherPromptText = `Next 7 days — avg max temp: ${realWeatherDetails.avgTempMax}°C, max wind: ${realWeatherDetails.maxWindSpeed}km/h. ` +
+          `Daily forecast: ${realWeatherDetails.forecast.map((f: { day: string; temp: string; emoji: string; alert: boolean }) => `${f.day}: ${f.temp} ${f.emoji}${f.alert ? ' (ALERT)' : ''}`).join(', ')}`;
       }
 
       if (intelResult) {
