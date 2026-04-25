@@ -58,6 +58,7 @@ cd biofin/biofin_nextjs
 
 # 2. Install dependencies
 npm install
+npm install lucide-react chart.js react-chartjs-2
 
 # 3. Configure Environment Variables
 # Create a .env.local file in the root and add your keys:
