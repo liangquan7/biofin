@@ -30,7 +30,7 @@ BioFin Oracle operates as an **active intelligence engine**. It ingests unstruct
 
 | Layer | Technology |
 | :--- | :--- |
-| **UI Framework** | Next.js (React), Tailwind CSS |
+| **UI Framework** | Next.js (React), Inline CSS / CSS-in-JS |
 | **Visualization** | Chart.js, react-chartjs-2 |
 | **API Routing** | Next.js App Router (Serverless with SSE Streaming) |
 | **AI Engine** | Z.AI GLM API (`ilmu-glm-5.1`) |
@@ -55,15 +55,16 @@ BioFin Oracle operates as an **active intelligence engine**. It ingests unstruct
 
 ```bash
 # 1. Clone the repo
-git clone [https://github.com/liangquan7/biofin.git](https://github.com/liangquan7/biofin.git)
+git clone https://github.com/liangquan7/biofin.git
 cd biofin
 
 # 2. Install dependencies
 npm install
+npm install lucide-react chart.js react-chartjs-2
 
 # 3. Configure Environment Variables
 # Create a .env.local file in the root and add your keys:
-ZAI_BASE_URL=[https://api.ilmu.ai/v1/chat/completions](https://api.ilmu.ai/v1/chat/completions)
+ZAI_BASE_URL=https://api.ilmu.ai/v1/chat/completions
 ZAI_API_KEY=YOUR-ZAI-API-KEY
 ZAI_MODEL=ilmu-glm-5.1
 TAVILY_API_KEY=YOUR-TAVILY-KEY
@@ -71,46 +72,51 @@ TAVILY_API_KEY=YOUR-TAVILY-KEY
 # 4. Run the development server
 npm run dev
 # The dashboard will be live at http://localhost:3000/
+```
 
-📂 Project Structure (Core)
+##📂 Project Structure (Core)
+```plaintext
 biofin/
- ├── app/
- │   ├── api/analyze/route.ts # Backend pipeline: SSE streaming, aggregation, LLM routing
- │   ├── page.tsx             # Main dashboard UI entry point & state management
- │   └── layout.tsx           # Global application layout
- ├── types/
- │   └── biofin.ts            # Single source of truth for TypeScript interfaces
- └── package.json             # Dependencies and scripts
+├── app/
+│   ├── api/analyze/route.ts # Backend pipeline: SSE streaming, aggregation, LLM routing
+│   ├── page.tsx             # Main dashboard UI entry point & state management
+│   └── layout.tsx           # Global application layout
+├── types/
+│   └── biofin.ts            # Single source of truth for TypeScript interfaces
+└── package.json             # Dependencies and scripts
+```
 
 🚧 System Constraints
-Ephemeral State: There is no database. All data is processed in-memory and destroyed post-request.
+- Ephemeral State: There is no database. All data is processed in-memory and destroyed post-request.
 
-Timeout Risk: Vercel serverless functions cap execution time. While mitigated by SSE streaming, extreme prolonged LLM inference chains will route the system to the Heuristic Fallback.
+- Timeout Risk: Vercel serverless functions cap execution time. While mitigated by SSE streaming, extreme prolonged LLM inference chains will route the system to the Heuristic Fallback.
 
-Input Fragility: The parsing engine relies on the structural integrity of the uploaded CSV files.
+- Input Fragility: The parsing engine relies on the structural integrity of the uploaded CSV files.
+
+- Deployment requires Vercel Pro for the 300 s serverless timeout budget.
 
 🔍 What's Real vs Mocked
-Real (AI-powered & Engineered)
+- Real (AI-powered & Engineered)
 
-Next.js backend CSV parsing and arithmetic pre-aggregation.
+- Next.js backend CSV parsing and arithmetic pre-aggregation.
 
-Z.AI GLM zero-shot inference generating strict structural JSON.
+- Z.AI GLM zero-shot inference generating strict structural JSON.
 
-Server-Sent Events (SSE) pipeline for real-time frontend hydration.
+- Server-Sent Events (SSE) pipeline for real-time frontend hydration.
 
-Client-side digital twin recalculations via Chart.js.
+- Client-side digital twin recalculations via Chart.js.
 
-Real-time fallback interception for failed LLM/API calls.
+- Real-time fallback interception for failed LLM/API calls.
 
-Mocked (For Hackathon Scope)
+- Mocked (For Hackathon Scope)
 
-No IoT Integration: Sensor data is manually uploaded via CSV, not polled from live hardware.
+- No IoT Integration: Sensor data is manually uploaded via CSV, not polled from live hardware.
 
-OCR/CV Module: File parser router is built, but actual image-to-text extraction is a mocked placeholder.
+- OCR/CV Module: File parser router is built, but actual image-to-text extraction is a mocked placeholder.
 
-No Background Task Queues: While the system utilizes asynchronous SSE to bypass serverless timeouts, it does not deploy heavy background workers (like Celery). It is completely stateless.
+- No Background Task Queues: While the system utilizes asynchronous SSE to bypass serverless timeouts, it does not deploy heavy background workers (like Celery). It is completely stateless.
 
-No Persistence: Historical trend analysis across sessions is not implemented due to the lack of a database.
+- No Persistence: Historical trend analysis across sessions is not implemented due to the lack of a database.
 
 👥 Team Dinosaur
 Tan Liang Chuan: Lead AI Orchestrator
