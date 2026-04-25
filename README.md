@@ -1,199 +1,117 @@
-BioFin Oracle
-The Z.AI Decision Brain for Malaysian Agri-Fintech
+**The Z.AI Decision Brain for Malaysian Agri-Fintech.** Moving SME orchard owners from weather-dependent gambles to data-driven operational management.
 
-BioFin Oracle is an AI-powered decision intelligence system for Malaysian agri-SME orchard owners. It helps farmers move from weather-dependent intuition to data-driven operational management.
+Built for **UM Hackathon 2026 — Domain 2: AI for Economic Empowerment & Decision Intelligence.**
 
-Built for UMHackathon 2026 — Domain 2: AI for Economic Empowerment & Decision Intelligence.
+## 💡 The Idea
+Malaysian high-value agriculture is paralyzed by the "Triple Volatility" crisis: biological waste, extreme meteorological shifts, and market information asymmetry. Existing tools provide passive dashboards that require manual interpretation—a fatal flaw when reacting to sudden environmental shifts.
 
-The Idea
+BioFin Oracle operates as an **active intelligence engine**. It ingests unstructured market news and structured farm telemetry to generate explainable, quantifiable action plans. It outputs direct operational directives (e.g., altering harvest dates) rather than just visualizing data.
 
-Malaysian high-value agriculture faces a Triple Volatility Crisis:
+## ⚙️ How It Works
+* **Data Ingestion** — Users upload up to four static CSV/JSON datasets (Plant Growth, Environmental Variables, Weather Records, Sales History).
+* **Pre-Aggregation** — The Next.js backend mathematically compresses the raw arrays into statistical summaries and trend signals to prevent LLM context window collapse.
+* **AI Reasoning** — The aggregated payload is transmitted to the Z.AI GLM API (`ilmu-glm-5.1`), forcing a deterministic JSON response conforming to a strict TypeScript interface.
+* **SSE Streaming (Timeout Mitigation)** — To bypass serverless execution limits, the backend streams the reasoning process and final JSON back to the client via Server-Sent Events (SSE) using keep-alive mechanisms.
+* **Execution Ledger** — The React frontend renders the "Agentic Decision Ledger," displaying the explicit operational command alongside the AI's causal reasoning chain.
+* **Simulation** — Users manipulate frontend sliders (e.g., fertilizer load, labor hours) to instantly recalculate projected profit margins via client-side logic.
 
-Biological risk — crop health, soil condition, pest pressure, and quality-grade uncertainty.
-Meteorological risk — rainfall instability, storm exposure, heat stress, and climate-driven yield disruption.
-Market risk — price volatility, oversupply pressure, export uncertainty, and revenue instability.
+## 🖥️ Screens
 
-Most agri-tech tools stop at passive dashboards. They show data, but farmers still need to interpret it manually.
+| Screen | What it does |
+| :--- | :--- |
+| **Command Center** | Displays the Agentic Decision Ledger, immediate biological/soil health metrics, and a 7-day micro-climate forecast. |
+| **Simulation Sandbox** | Digital Twin interface. Sliders for input variables (Nitrogen, Labor) dynamically updating expected net profit graphs. |
+| **Global Operations** | Triggers manual stress tests (e.g., logistics disruption) and displays automated hedging strategies. |
+| **SME Compliance** | Audits uploaded data against LHDN e-invoicing Phase 3 rules and calculates system ROI. |
 
-BioFin Oracle goes further.
-It converts farm records, operational data, weather signals, and market intelligence into direct, explainable action recommendations. Instead of only showing charts, it tells the SME owner what action to take, why it matters, and how it affects risk, profit, and cash runway.
+## 🛠️ Tech Stack
 
-How It Works
-1. Data Ingestion
+| Layer | Technology |
+| :--- | :--- |
+| **UI Framework** | Next.js (React), Tailwind CSS |
+| **Visualization** | Chart.js, react-chartjs-2 |
+| **API Routing** | Next.js App Router (Serverless with SSE Streaming) |
+| **AI Engine** | Z.AI GLM API (`ilmu-glm-5.1`) |
+| **Web Search** | Tavily Search API |
 
-Users upload all four required data categories:
+## 🧠 AI Integration
 
-Environmental & Geospatial Data
-Biological & Crop Data
-Farming Operations Data
-Financial & Commercial Data
+**Z.AI GLM API (Synchronous Inference):**
+* Context-aware reasoning of agricultural telemetry.
+* Generation of strict JSON decision matrices.
+* Translation of raw numbers into human-readable causal logic.
 
-Supported formats include CSV and JSON. Image uploads are supported for selected categories through a preliminary OCR/CV placeholder path, but production-grade OCR/CV extraction is outside the preliminary MVP scope.
+**Heuristic Evaluation Engine (Graceful Fallback):**
+* Hardcoded risk flags (e.g., max wind > 24km/h) that trigger a default deterministic dataset if the LLM times out, API fails, or hallucinates an invalid schema. Ensures 100% UI uptime.
 
-2. Pre-Aggregation
+## 🚀 Setup & Running
 
-The Next.js backend parses uploaded files and compresses raw data into structured summaries, statistical indicators, and trend signals. This reduces LLM context overload and keeps the AI reasoning pipeline more stable.
+**Prerequisites:**
+* Node.js (v18+)
+* Z.AI GLM API Key
+* Tavily API Key
 
-3. AI Reasoning
+```bash
+# 1. Clone the repo
+git clone [https://github.com/liangquan7/biofin.git](https://github.com/liangquan7/biofin.git)
+cd biofin/biofin_nextjs
 
-The aggregated payload is sent to a configured GLM-compatible AI reasoning model through environment variables. The backend instructs the model to return a strict AnalysisResult JSON object that matches the frontend contract.
-
-4. Validation & Fallback
-
-Before the result reaches the dashboard, the backend applies:
-
-Markdown/JSON cleanup
-Brace-based JSON extraction
-Schema repair through sanitiseResult
-Numeric range clamping
-Safe fallback result generation if AI output fails
-
-This prevents malformed AI output from crashing the frontend.
-
-5. Execution Ledger
-
-The frontend renders an Agentic Decision Ledger, showing:
-
-The recommended action
-The reasoning chain
-Risk level
-financial and operational indicators
-market and weather context
-6. Simulation Sandbox
-
-Users can adjust operational sliders such as irrigation, labour, fertilizer, and selling channel assumptions. The dashboard recalculates projected profit, cash runway, and risk impact through client-side simulation logic.
-
-Screens
-Screen	What it does
-Command Center	Displays the main AI recommendation, risk index, cash runway, processed record count, and Agentic Decision Ledger.
-Simulation Sandbox	Allows users to adjust operational and commercial assumptions to simulate projected profit and risk changes.
-Global Operations	Shows weather and market intelligence, operational risks, and export-related signals.
-SME Compliance & ROI	Provides compliance-readiness indicators and ROI-related insights for SME decision support.
-Tech Stack
-Layer	Technology
-UI Framework	Next.js, React, Tailwind CSS
-API Routing	Next.js App Router — app/api/analyze/route.ts
-AI Engine	Configured GLM-compatible reasoning model through environment variables
-Market Intelligence	Tavily Search API
-Data Processing	Server-side CSV/JSON parsing, aggregation, and schema validation
-Frontend Simulation	Client-side calculation and dashboard rendering
-AI Integration
-GLM-Compatible AI Reasoning
-
-BioFin Oracle uses a configured AI reasoning endpoint to process summarised farm, operational, weather, and market data. The model is instructed to produce a strict structured JSON response instead of free-form text.
-
-The AI layer supports:
-
-Context-aware reasoning over agricultural data
-Generation of structured decision recommendations
-Explanation of causal links between data signals and recommended actions
-Schema-constrained output for frontend stability
-Local Fallback & Heuristic Evaluation
-
-If the AI call fails, times out, or returns invalid output, the system falls back to deterministic logic. This ensures the dashboard can still render safe baseline values instead of crashing.
-
-Fallback protection includes:
-
-Default AnalysisResult generation
-Financial oversupply-risk analysis
-Required-field repair
-Safe numeric defaults
-SSE error and complete events
-Prerequisites
-Node.js v18 or above
-Z.AI / GLM-compatible API key
-Tavily API key
-Git
-npm
-Setup
-# Clone the repository
-git clone https://github.com/liangquan7/biofin.git
-
-# Move into the frontend project
-cd biofin/frontend
-
-# Install dependencies
+# 2. Install dependencies
 npm install
 
-Create a .env.local file inside the frontend directory:
+# 3. Configure Environment Variables
+# Create a .env.local file in the root and add your keys:
+ZAI_BASE_URL=[https://api.ilmu.ai/v1/chat/completions](https://api.ilmu.ai/v1/chat/completions)
+ZAI_API_KEY=YOUR-API-KEY
+ZAI_MODEL=ilmu-glm-5.1
+TAVILY_API_KEY=YOUR-TAVILY-KEY
 
-ZAI_API_KEY=your_zai_or_glm_api_key_here
-ZAI_BASE_URL=your_model_base_url_here
-ZAI_MODEL=your_configured_model_name_here
-TAVILY_API_KEY=your_tavily_api_key_here
-
-Do not commit .env.local to GitHub.
-
-Running the Project
+# 4. Run the development server
 npm run dev
+# The dashboard will be live at http://localhost:3000/
+📂 Project Structure (Core)
+Plaintext
+biofin_nextjs/
+ ├── app/
+ │   ├── api/route.ts        # Backend pipeline: SSE streaming, aggregation, LLM routing
+ │   ├── page.tsx            # Main dashboard UI entry point & state management
+ │   └── globals.css         # Tailwind and global styles
+ ├── types/
+ │   └── biofin.ts           # Single source of truth for TypeScript interfaces (AnalysisResult)
+ └── package.json            # Dependencies and scripts
+🚧 System Constraints
+The system architecture dictates strict operational boundaries:
 
-Then open:
+Ephemeral State: There is no database. All data is processed in-memory and destroyed post-request.
 
-http://localhost:3000
-Production Build
-npm run build
+Timeout Risk: Vercel serverless functions cap execution time. While mitigated by SSE streaming, extreme prolonged LLM inference chains will route the system to the Heuristic Fallback.
 
-The current release branch has been verified with a successful local build and no build-breaking TypeScript errors.
+Input Fragility: The parsing engine relies on the structural integrity of the uploaded CSV files.
 
-Project Structure
-frontend/
-  app/
-    api/
-      analyze/
-        route.ts       # Core backend pipeline: parsing, aggregation, AI routing, SSE streaming
-    page.tsx           # Main upload and dashboard UI
-    layout.tsx         # Global app layout
-    globals.css        # Tailwind and global styles
+🔍 What's Real vs Mocked
+Real (AI-powered & Engineered)
 
-  public/              # Static assets
-  package.json         # Dependencies and scripts
-  next.config.ts       # Next.js configuration
-System Constraints
-Ephemeral State
+Next.js backend CSV parsing and arithmetic pre-aggregation.
 
-BioFin Oracle does not use a persistent database in the preliminary MVP. Uploaded data is processed during the request and is not stored permanently.
+Z.AI GLM zero-shot inference generating strict structural JSON.
 
-Serverless Timeout Risk
+Server-Sent Events (SSE) pipeline for real-time frontend hydration.
 
-The system runs as a serverless Next.js application. To reduce timeout risk, the backend summarises uploaded data before AI reasoning and emits SSE progress events while analysis is running. If the AI path fails before a hard platform timeout, fallback logic returns a safe baseline result.
+Client-side digital twin recalculations via Chart.js.
 
-Input Constraints
+Real-time fallback interception for failed LLM/API calls.
 
-Uploaded files must be structurally parseable CSV or JSON. The system includes file-size limits, parsing checks, schema repair, and fallback handling to reduce failure risk from malformed input.
+Mocked (For Hackathon Scope)
 
-OCR/CV Limitation
+No IoT Integration: Sensor data is manually uploaded via CSV, not polled from live hardware.
 
-Image uploads are routed through a preliminary placeholder path. Real production-grade OCR/CV extraction is not claimed in the preliminary MVP.
+OCR/CV Module: File parser router is built, but actual image-to-text extraction is a mocked placeholder.
 
-What Is Real vs Mocked
-Real / Implemented
-Next.js frontend dashboard
-CSV/JSON upload workflow
-Server-side file parsing and summarisation
-SSE progress streaming
-AI reasoning pipeline
-Tavily market intelligence integration
-AnalysisResult schema validation and repair
-5 MB per-file upload limit
-Oversized-file rejection
-Dashboard rendering across main tabs
-Fallback handling for AI-service failure
-Client-side simulation logic
-Mocked / Limited for Hackathon Scope
-No live IoT sensor integration
-No persistent database
-No production-grade OCR/CV extraction
-No real payment processing
-No official LHDN MyInvois validation
-No distributed worker queue such as Celery
-No long-term historical trend storage across sessions
-Team
-Member	Role
-Tan Liang Chuan	Lead AI Orchestrator / Technical Lead
-Thet Htun Oakar	Backend Lead
-Ng Yi Ren	Backend Lead
-Tan Li Hong	Frontend Lead
-Chen Bing Yan	QA Lead / Frontend
-Summary
+No Persistence: Historical trend analysis across multiple sessions is not implemented due to the lack of a database (e.g., PostgreSQL).
 
-BioFin Oracle transforms fragmented agricultural, operational, and financial data into practical decision intelligence for Malaysian agri-SMEs. It helps orchard owners understand risk, protect profit, and make faster management decisions under biological, weather, and market uncertainty.
+👥 Team Dinosaur
+Tan Liang Chuan: Lead AI Orchestrator
+
+Thet Htun Oakar & Ng Yi Ren: Backend Leads
+
+Tan Li Hong & Chen Bing Yan: Frontend Leads
