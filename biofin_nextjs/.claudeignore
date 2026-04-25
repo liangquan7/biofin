@@ -1,0 +1,32 @@
+# 依赖包
+node_modules/
+bower_components/
+
+# 构建产物
+dist/
+build/
+out/
+target/
+
+# 版本控制与日志
+.git/
+.svn/
+*.log
+npm-debug.log*
+
+# 二进制文件与重资源
+*.exe
+*.dll
+*.so
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.pdf
+*.zip
+*.tar.gz
+
+# 虚拟环境
+venv/
+.venv/
+env/

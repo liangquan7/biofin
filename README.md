@@ -10,7 +10,7 @@ Malaysian high-value agriculture is paralyzed by the "Triple Volatility" crisis:
 ## How It Works
 * **Data Ingestion** — Users upload up to four static CSV/JSON datasets (Plant Growth, Environmental Variables, Weather Records, Sales History).
 * **Pre-Aggregation** — The Next.js backend mathematically compresses the raw arrays into statistical summaries and trend signals to prevent LLM context window collapse.
-* **AI Reasoning** — The aggregated payload is transmitted to the Z.AI GLM API (`nemo-super`), forcing a deterministic JSON response conforming to a strict TypeScript interface.
+* **AI Reasoning** — The aggregated payload is transmitted to the Z.AI GLM API (`ilmu-glm-5.1`), forcing a deterministic JSON response conforming to a strict TypeScript interface.
 * **Execution Ledger** — The React frontend renders the "Agentic Decision Ledger," displaying the explicit operational command alongside the AI's causal reasoning chain.
 * **Simulation** — Users manipulate frontend sliders (e.g., fertilizer load, labor hours) to instantly recalculate projected profit margins via client-side logic.
 
@@ -30,7 +30,7 @@ Malaysian high-value agriculture is paralyzed by the "Triple Volatility" crisis:
 | UI Framework | Next.js (React), Tailwind CSS |
 | Visualization | Chart.js |
 | API Routing | Next.js App Router (`app/api/analyze/route.ts`) |
-| AI Engine | Z.AI GLM API (`nemo-super`) |
+| AI Engine | Z.AI GLM API (`ilmu-glm-5.1`) |
 | Web Search | Tavily Search API |
 
 ## AI Integration
@@ -52,17 +52,20 @@ Malaysian high-value agriculture is paralyzed by the "Triple Volatility" crisis:
 
 ```bash
 # Clone the repo
-git clone [https://github.com/your-org/biofin-oracle.git](https://github.com/your-org/biofin-oracle.git)
-cd biofin-oracle/frontend
+git clone https://github.com/liangquan7/biofin.git
+cd biofin/biofin_nextjs
 
 # Install dependencies
 npm install
+npm install lucide-react chart.js react-chartjs-2
+
 
 # Add Environment variables (not checked in)
-# Create a .env.local file in the root:
-# GLM_API_KEY=your_zai_key_here
-# GLM_MODEL=nemo-super
-# TAVILY_API_KEY=your_tavily_key_here
+# Create a .env.local file in the root (biofin/biofin_nextjs/) and copy the following lines into it:
+ZAI_BASE_URL=YOUR-BASE-URL
+ZAI_API_KEY=YOUR-API-KEY
+ZAI_MODEL=MODEL-NAME
+TAVILY_API_KEY=YOUR-API-KEY
 ```
 
 ## Running
@@ -70,12 +73,13 @@ npm install
 ```bash
 # Run the development server
 npm run dev
+# Then open website at http://localhost:3000/
 ```
 
 ## Project Structure
 
 ```plaintext
-frontend/
+biofin_nextjs/
   app/
     api/analyze/route.ts     # Core backend pipeline: file parsing, aggregation, LLM routing
     page.tsx                 # Main dashboard UI entry point
