@@ -10,13 +10,18 @@
     "test": "jest"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^3.0.54",
     "@paralleldrive/cuid2": "^3.3.0",
+    "@upstash/ratelimit": "^2.0.8",
+    "@upstash/redis": "^1.37.0",
+    "ai": "^6.0.170",
     "chart.js": "^4.5.1",
     "lucide-react": "^1.8.0",
     "next": "16.2.4",
     "react": "19.2.4",
     "react-chartjs-2": "^5.3.1",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

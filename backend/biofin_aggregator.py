@@ -121,21 +121,7 @@ async def aggregate_endpoint(
                 status_code=413,
             )
 
-        contents = await file.read()
-
-        # ── Guard 2: reject by actual byte count.
-        # Catches chunked uploads where Content-Length may be absent or wrong.
-        if len(contents) > MAX_UPLOAD_BYTES:
-            return JSONResponse(
-                {
-                    "error": (
-                        f"File exceeds the {MAX_UPLOAD_BYTES // 1_048_576} MB "
-                        "upload limit (measured after reading)."
-                    ),
-                    "fallback": True,
-                },
-                status_code=413,
-            )
+        
 
         filename = file.filename or "upload"
 
@@ -158,22 +144,23 @@ async def aggregate_endpoint(
             )
 
         # ── Parse into DataFrame ───────────────────────────────────────────────
-        df = _load_to_dataframe(contents, filename)
+        df = _load_to_dataframe(file, filename)
 
         # ── Guard 3: cap row count before any O(n) pandas work.
         # We keep the *tail* (most-recent rows) because date-sorted CSVs have
         # the freshest data at the bottom, which matters most for the LLM context.
         original_row_count = len(df)
-        if original_row_count > MAX_DATAFRAME_ROWS:
-            df = df.tail(MAX_DATAFRAME_ROWS).reset_index(drop=True)
+        SAFE_LIMIT = 500
+        if original_row_count > SAFE_LIMIT:
+            df = df.tail(SAFE_LIMIT).reset_index(drop=True)
 
         summary = aggregators[category](df, filename)
 
         # Annotate if we truncated so the TypeScript client can surface a warning.
-        if original_row_count > MAX_DATAFRAME_ROWS:
+        if original_row_count > SAFE_LIMIT:
             summary["truncated"] = True
             summary["original_row_count"] = original_row_count
-            summary["truncated_to"] = MAX_DATAFRAME_ROWS
+            summary["truncated_to"] = SAFE_LIMIT
 
         return JSONResponse(summary)
 
@@ -185,39 +172,32 @@ async def aggregate_endpoint(
 
 # ─── Loader ───────────────────────────────────────────────────────────────────
 
-def _load_to_dataframe(contents: bytes, filename: str) -> pd.DataFrame:
-    """Parse CSV or JSON bytes into a DataFrame with normalised column names."""
-    text = contents.decode("utf-8", errors="replace")
-    df: pd.DataFrame | None = None  # explicit None — no UnboundLocalError possible
+def _load_to_dataframe(file: UploadFile, filename: str) -> pd.DataFrame:
+    df: pd.DataFrame | None = None
 
-    if filename.lower().endswith(".json"):
-        try:
-            raw = json.loads(text)
+    try:
+        file.file.seek(0)
+        
+        if filename.lower().endswith(".json"):
+            raw = json.load(file.file)
             df = pd.DataFrame(raw if isinstance(raw, list) else [raw])
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"Invalid JSON in '{filename}': {exc}") from exc
-    else:
-        for sep in [",", "\t", ";"]:
+        else:
             try:
-                candidate = pd.read_csv(
-                    io.StringIO(text),  # ✅ FIX #5: stdlib io.StringIO — pd.io.common.StringIO is deprecated in pandas ≥1.5 and removed in pandas 2.x
-                    sep=sep,
-                    on_bad_lines="skip",
-                    dtype_backend="numpy_nullable",
-                )
-                if len(candidate.columns) > 1:
-                    df = candidate
-                    break
-                elif df is None:
-                    df = candidate  # keep the single-column result as last resort
+                df = pd.read_csv(file.file, sep=",", on_bad_lines="skip", dtype_backend="numpy_nullable")
+                if len(df.columns) <= 1: # 如果只有一列，可能是分隔符错了
+                    file.file.seek(0)
+                    df = pd.read_csv(file.file, sep=";", on_bad_lines="skip")
             except Exception:
-                continue
+                file.file.seek(0)
+                df = pd.read_csv(file.file, sep="\t", on_bad_lines="skip")
+
+    except Exception as exc:
+        raise ValueError(f"Error parsing '{filename}': {exc}")
+    finally:
+        file.file.seek(0)
 
     if df is None or df.empty:
-        raise ValueError(
-            f"Could not parse '{filename}' as CSV or JSON. "
-            "Ensure the file contains at least one row of data with a header row."
-        )
+        raise ValueError(f"Could not parse '{filename}' or file is empty.")
 
     df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
     return df

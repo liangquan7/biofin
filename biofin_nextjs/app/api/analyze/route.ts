@@ -1,5 +1,83 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { extractImageWithVision } from '@/lib/vision';
+import { z } from 'zod';
+import { createOpenAI } from '@ai-sdk/openai';
+import { generateObject } from 'ai';
+
+const analysisSchema = z.object({
+  analysisId: z.string().optional(),
+  generatedAt: z.string().optional(),
+  cropType: z.string().optional(),
+  region: z.string().optional(),
+  isMockData: z.boolean().optional(),
+  bioFertReduction: z.number(),
+  bioIrrigation: z.number(),
+  inputs: z.object({ fert: z.number(), labor: z.number() }),
+  loanRate: z.number().optional(),
+  plantHealth: z.object({
+    bioHealthIndex: z.number(),
+    gradeARatio: z.number(),
+    gradeBRatio: z.number(),
+    expectedLifespan: z.number(),
+    soilPH: z.number(),
+    soilMoisture: z.number(),
+    npk: z.object({
+      nitrogen: z.object({ ppm: z.number(), pct: z.number() }),
+      phosphorus: z.object({ ppm: z.number(), pct: z.number() }),
+      potassium: z.object({ ppm: z.number(), pct: z.number() })
+    })
+  }),
+  environment: z.object({
+    avgTemp: z.number(), avgHumidity: z.number(), solarRadiation: z.number(),
+    windSpeed: z.number(), pressure: z.number(), co2: z.number()
+  }),
+  weatherRisk: z.enum(['rain', 'drought', 'wind']).nullable(),
+  weatherDetails: z.object({
+    avgRainfall: z.number(), avgTempMax: z.number(), maxWindSpeed: z.number(),
+    forecast: z.array(z.object({ day: z.string(), emoji: z.string(), tempC: z.number(), alert: z.boolean() }))
+  }),
+  financial: z.object({
+    expectedProfit: z.number(), cashRunway: z.number(), fertCost: z.number(),
+    laborCost: z.number(), weatherLoss: z.number(), suggestedLoanRate: z.number(),
+    pricePerKg: z.number(), baseRevenue: z.number(), annualRevenueEstimate: z.number()
+  }),
+  salesInsights: z.object({
+    avgPricePerKg: z.number(), avgVolumeKg: z.number(), priceVolatilityPct: z.number(),
+    minPrice: z.number(), maxPrice: z.number(), dominantChannel: z.string(),
+    hasData: z.boolean(), unsalableRisk: z.boolean(), alternativeStrategy: z.string().nullable()
+  }),
+  compliance: z.array(z.object({
+    label: z.string(), status: z.enum(['ok', 'warn', 'error']), detail: z.string()
+  })),
+  dynamicIntelligence: z.object({
+    competitors: z.array(z.object({
+      name: z.string(), threatLevel: z.enum(['low', 'medium', 'high', 'critical']),
+      insight: z.string(), recommendedAction: z.string()
+    })),
+    stressTests: z.array(z.object({
+      id: z.string(), title: z.string(), impact: z.string(),
+      lossEstimate: z.number(), recoveryStrategy: z.string()
+    }))
+  }).optional(),
+  recommendation: z.string(),
+  summary: z.object({
+    totalDataPoints: z.number(), plantGrowthRecords: z.number(), envRecords: z.number(),
+    weatherRecords: z.number(), salesRecords: z.number(), overallHealthScore: z.number(),
+    riskLevel: z.enum(['LOW', 'MEDIUM', 'HIGH']), filesUploaded: z.number()
+  }).optional()
+});
+
+const TavilyResultSchema = z.object({
+  title:   z.string().default('Untitled Insight'),
+  url:     z.string().url().default(''),
+  content: z.string().min(1, "Empty content from search").default('No detailed content available.'),
+  score:   z.number().optional(), // 顺便捕获相关性分数
+});
+
+const TavilyResponseSchema = z.object({
+  results: z.array(TavilyResultSchema).default([]),
+});
+// ─────────────────────────────────────────────────────────────────────────
 
 // ─── Vercel serverless function duration limit ────────────────────────────────
 // Pro plan: up to 300 s. Streaming keeps the TCP connection alive for the
@@ -209,6 +287,10 @@ function tryParseJSON(text: string): unknown {
 }
 
 async function readFile(file: File): Promise<Record<string, string>[]> {
+  if (file.size > 2 * 1024 * 1024) {
+    console.log(`[BioFin] File ${file.name} is large (${(file.size / 1024).toFixed(1)}KB). Forwarding to Python for heavy lifting.`);
+    return []; 
+  }
   const text = await file.text();
   if (file.name.endsWith('.json')) {
     const data = tryParseJSON(text);
@@ -600,11 +682,7 @@ async function fetchRealWeatherForecast(lat: number, lng: number): Promise<{
 
 // --- Tavily Web Search --------------------------------------------------------
 
-interface TavilyResult {
-  title: string;
-  url:   string;
-  content: string;
-}
+type TavilyResult = z.infer<typeof TavilyResultSchema>;
 
 async function tavilySearch(query: string, maxResults = 2): Promise<TavilyResult[]> {
   try {
@@ -619,15 +697,25 @@ async function tavilySearch(query: string, maxResults = 2): Promise<TavilyResult
         include_answer: false,
       }),
     });
-    if (!res.ok) return [];
-    const data = await res.json() as { results?: unknown[] };
-    const results = (data.results ?? []) as { title?: string; url?: string; content?: string }[];
-    return results.map(r => ({
-      title:   r.title   ?? '',
-      url:     r.url     ?? '',
-      content: r.content ?? '',
-    }));
-  } catch {
+
+    if (!res.ok) {
+      console.warn(`[BioFin] Tavily API error: ${res.status}`);
+      return [];
+    }
+
+    const rawData = await res.json();
+
+    const validated = TavilyResponseSchema.safeParse(rawData);
+
+    if (!validated.success) {
+      console.error('[BioFin] Tavily Schema Validation Failed:', validated.error.format());
+      return [];
+    }
+
+    return validated.data.results;
+
+  } catch (err) {
+    console.error('[BioFin] Tavily search network error:', err);
     return [];
   }
 }
@@ -812,97 +900,6 @@ function buildDefaultResult(
 //   Step 8  — unescaped literal newlines/tabs inside strings
 //   Step 9  — close unclosed brackets/braces (truncated output)
 //
-function repairLLMJson(raw: string): string {
-  let t = raw;
-
-  // Step 1: strip all markdown code fences
-  t = t.replace(/```(?:json)?\s*/gi, '').replace(/```/g, '');
-
-  // Step 2: replace smart / curly quotes with straight quotes
-  // MUST occur before brace-counting so the brace scanner sees only
-  // standard ASCII double-quotes as string delimiters.
-  t = t
-    .replace(/[\u201C\u201D]/g, '"')   // " "
-    .replace(/[\u2018\u2019]/g, "'");  // ' '
-
-  // Step 3: isolate outermost { … } using brace counting
-  const s = t.indexOf('{');
-  if (s !== -1) {
-    let depth = 0;
-    let inStr = false;
-    let esc   = false;
-    let endIdx = -1;
-    for (let i = s; i < t.length; i++) {
-      const ch = t[i];
-      if (esc)         { esc = false; continue; }
-      if (ch === '\\') { esc = true;  continue; }
-      if (ch === '"')  { inStr = !inStr; continue; }
-      if (!inStr) {
-        if (ch === '{') depth++;
-        else if (ch === '}') {
-          depth--;
-          if (depth === 0) { endIdx = i; break; }
-        }
-      }
-    }
-    if (endIdx !== -1) {
-      t = t.slice(s, endIdx + 1); // precisely extract the first complete JSON object
-    } else {
-      t = t.slice(s); // truncated output — Step 9 will close any open brackets
-    }
-  }
-
-  // Step 4a: Python-style dict keys — 'key': → "key":
-  t = t.replace(/'([^']+?)'(\s*:)/g, '"$1"$2');
-  // Step 4b: single-quoted string values
-  t = t.replace(/:\s*'((?:[^'\\]|\\.)*)'/g, ': "$1"');
-
-  // Step 5: Python literals (object positions)
-  t = t
-    .replace(/:\s*None\b/g,  ': null')
-    .replace(/:\s*True\b/g,  ': true')
-    .replace(/:\s*False\b/g, ': false');
-  // Step 5b: Python literals inside arrays — e.g. [None, True, False]
-  t = t
-    .replace(/\bNone\b/g,  'null')
-    .replace(/\bTrue\b/g,  'true')
-    .replace(/\bFalse\b/g, 'false');
-
-  // Step 6: remove JS // comments
-  t = t.replace(/\/\/[^\n\r]*/g, '');
-
-  // Step 7: trailing commas before } or ]  (run 4× for deep nesting)
-  for (let i = 0; i < 4; i++) t = t.replace(/,\s*([}\]])/g, '$1');
-
-  // Step 8: unescaped literal newlines / tabs inside string values
-  t = t.replace(/"((?:[^"\\]|\\.)*)"/g, (_match, inner: string) => {
-    const fixed = inner
-      .replace(/(?<!\\)\n/g, '\\n')
-      .replace(/(?<!\\)\r/g, '\\r')
-      .replace(/(?<!\\)\t/g, '\\t');
-    return `"${fixed}"`;
-  });
-
-  // Step 9: close any unclosed brackets / braces (truncated output)
-  const stack: string[] = [];
-  let inStr2 = false;
-  let esc2   = false;
-  for (const ch of t) {
-    if (esc2)            { esc2 = false; continue; }
-    if (ch === '\\')     { esc2 = true;  continue; }
-    if (ch === '"')      { inStr2 = !inStr2; continue; }
-    if (inStr2)          continue;
-    if (ch === '{')      stack.push('}');
-    else if (ch === '[') stack.push(']');
-    else if (ch === '}' || ch === ']') stack.pop();
-  }
-  t = t + stack.reverse().join('');
-
-  return t.trim();
-}
-
-// Keep old name as alias so call-sites don't change
-const stripMarkdownJSON = repairLLMJson;
 
 // --- Validate dynamicIntelligence sub-object ----------------------------------
 
@@ -1442,109 +1439,6 @@ Now perform your complete analysis and output the JSON object ONLY. No text befo
 
   return sections.join('\n');
 }
-
-// --- Call ZAI (ilmu.ai) API ---------------------------------------------------
-
-async function callZAI(systemPrompt: string, userPrompt: string): Promise<string> {
-  // Reliability: MAX_RETRIES = 1 (no extra retry on timeout, saves quota)
-  const MAX_RETRIES       = 1;
-  // C-8 FIX: Reduced from 280s to 240s.
-  // The Vercel function has a hard wall at 300s (maxDuration above).
-  // The old 280s left only 20s for sanitiseResult + SSE emission — not enough
-  // if ZAI is slow. 240s gives a comfortable 60s margin for the fallback path.
-  const REQUEST_TIMEOUT_MS = 240_000;
-
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    const abortCtrl = new AbortController();
-    // Bug #3 fix: timeout declared before try so `finally` can always reach it.
-    const timeout = setTimeout(() => abortCtrl.abort(), REQUEST_TIMEOUT_MS);
-
-    try {
-      const res = await fetch(ZAI_BASE_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type':  'application/json',
-          'Authorization': `Bearer ${ZAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model:       ZAI_MODEL,
-          temperature: 0.1,
-          max_tokens:  8192,
-          stream:      false,   // ZAI Reliability: disable streaming for deterministic JSON
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user',   content: userPrompt   },
-          ],
-        }),
-        signal: abortCtrl.signal,
-      });
-
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(`ZAI API error ${res.status}: ${errText.slice(0, 300)}`);
-      }
-
-      // Branch A: synchronous JSON response (stream:false or API downgrade)
-      const contentType = res.headers.get('content-type') || '';
-      if (contentType.includes('application/json')) {
-        console.log('[BioFin] API returned synchronous JSON response.');
-        const data = await res.json();
-        console.log('[DEBUG ZAI RAW RESPONSE]:', JSON.stringify(data, null, 2));
-        const content = data?.choices?.[0]?.message?.content;
-        if (!content || !content.trim()) throw new Error('API returned empty JSON content');
-        return content;
-      }
-
-      // Branch B: robust empty-stream handling — server ignored stream:false
-      if (!res.body) throw new Error('No response body');
-      const reader  = res.body.getReader();
-      const decoder = new TextDecoder('utf-8');
-      let fullContent = '';
-      let buffer      = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed === 'data: [DONE]') continue;
-          if (!trimmed.startsWith('data: ') && !trimmed.startsWith(':')) {
-            console.warn('[BioFin warning] received non-standard stream data:', trimmed);
-          }
-          if (trimmed.startsWith('data: ')) {
-            try {
-              const parsed = JSON.parse(trimmed.slice(6));
-              fullContent += parsed.choices?.[0]?.delta?.content || '';
-            } catch {
-              console.error('[BioFin] Failed to parse stream line:', trimmed);
-            }
-          }
-        }
-      }
-
-      if (!fullContent.trim()) {
-        throw new Error(`ZAI returned empty streamed content (attempt: ${attempt})`);
-      }
-      return fullContent;
-
-    } catch (err) {
-      // Bug #2 fix: AbortError = timeout fired. No point retrying — throw immediately.
-      const isAbort = err instanceof DOMException && err.name === 'AbortError';
-      console.warn(`[BioFin] ZAI attempt ${attempt}/${MAX_RETRIES} failed:`, String(err));
-      if (isAbort || attempt === MAX_RETRIES) throw err;
-      await new Promise(r => setTimeout(r, 1000 * attempt));
-    } finally {
-      // Bug #3 fix: clearTimeout ONLY here — never duplicated in the catch block.
-      clearTimeout(timeout);
-    }
-  }
-
-  throw new Error('ZAI API exhausted all retries');
-}
-
 // ─── Internal SSE helpers ─────────────────────────────────────────────────────
 
 const enc = new TextEncoder();
@@ -1884,7 +1778,21 @@ export async function POST(request: NextRequest) {
           analysisId,
         );
 
-        const rawLLMOutput = await callZAI(systemPrompt, userPrompt);
+        const openaiCompatible = createOpenAI({
+          baseURL: ZAI_BASE_URL.replace(/\/chat\/completions$/, ''),
+          apiKey: ZAI_API_KEY,
+        });
+
+        const { object: parsed } = await generateObject({
+          model: openaiCompatible(ZAI_MODEL),
+          schema: analysisSchema,
+          system: systemPrompt,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user',   content: userPrompt   },
+          ],
+        });
+        
         clearInterval(keepaliveInterval);
 
         // ── Stage 5: Validate & sanitise ──────────────────────────────────
@@ -1894,20 +1802,8 @@ export async function POST(request: NextRequest) {
           progress: 88,
         });
 
-        const cleanedJSON = stripMarkdownJSON(rawLLMOutput);
-        let parsed: unknown;
-
-        try {
-          parsed = JSON.parse(cleanedJSON);
-        } catch (firstErr) {
-          console.error('[BioFin] JSON parse failed. Raw LLM output (first 600 chars):', rawLLMOutput.slice(0, 600));
-          console.error('[BioFin] Cleaned JSON (first 600 chars):', cleanedJSON.slice(0, 600));
-          throw new Error(`JSON parse error: ${(firstErr as Error).message}`);
-        }
-
-        // Concern A fix: sanitise the (potentially malformed) LLM JSON FIRST,
-        // then overwrite weatherDetails with the trusted Open-Meteo payload.
         const result = sanitiseResult(parsed, defaults);
+        
         if (realWeatherDetails) {
           result.weatherDetails = realWeatherDetails;
         }
