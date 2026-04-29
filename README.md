@@ -56,7 +56,7 @@ BioFin Oracle operates as an **active intelligence engine**. It ingests unstruct
 ```bash
 # 1. Clone the repo
 git clone https://github.com/liangquan7/biofin.git
-cd biofin
+cd biofin/biofin_nextjs
 
 # 2. Install dependencies
 npm install
