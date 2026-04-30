@@ -1,5 +1,5 @@
 "use client";
-
+import Link from 'next/link';
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import {
   TrendingUp, Zap, BarChart3, Globe,
@@ -16,6 +16,9 @@ import {
   LineElement, Title, Tooltip, Filler, Legend,
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
+import { useRouter } from "next/navigation";
+import { onAuthStateChanged, signOut } from "firebase/auth";
+import { User } from "firebase/auth";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Filler, Legend);
 
@@ -216,6 +219,7 @@ import type {
   AnalysisResult,
   WeatherForecastDay,
 } from '@/types/biofin';
+import { auth } from '@/lib/firebase';
 // ─── Utility Hooks & Components ───────────────────────────────────────────────
 
 // ─── C-6 FIX: useAnimatedNumber — stale closure corrected ────────────────────
@@ -1105,12 +1109,38 @@ class DemoBoundary extends React.Component<
 // ─── End C-2 FIX ─────────────────────────────────────────────────────────────
 
 export default function BioFinOracle() {
-  const [resetKey, setResetKey] = React.useState(0);
+  const [resetKey, setResetKey] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<User | null>(null);
+  const router = useRouter();
 
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      if (!currentUser) {
+        router.push("/login");
+      } else {
+        setUser(currentUser);
+        setLoading(false);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [router]);
+
+  if (loading) {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f2f7f4' }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ width: 40, height: 40, border: '4px solid #e4ede8', borderTop: '4px solid #059669', borderRadius: '50%', animation: 'spin 1s linear infinite', margin: '0 auto 16px' }} />
+          <div style={{ color: '#059669', fontWeight: 700, fontFamily: "'Sora', sans-serif" }}>Security verification in progress...</div>
+        </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    );
+  }
   return (
     <ToastProvider>
       <DemoBoundary onReset={() => setResetKey(k => k + 1)}>
-        {/* 这里加上了 key={resetKey}，利用 React 机制强制重载 */}
         <BioFinOracleInner key={resetKey} />
       </DemoBoundary>
     </ToastProvider>
@@ -1721,9 +1751,23 @@ function BioFinOracleInner() {
                 <div style={{ fontSize: 10, color: '#8aac98', fontWeight: 600, letterSpacing: '0.1em', textTransform: 'uppercase', marginTop: 2 }}>Smart Agriculture Decision Engine v2.0</div>
               </div>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#edfaf4', border: '1px solid #a7f3d0', borderRadius: 20, padding: '6px 14px' }}>
-              <Database size={12} color="#059669" />
-              <span style={{ fontSize: 11, color: '#059669', fontWeight: 700 }}>Data Import Portal</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}> 
+              <Link 
+                href="/login" 
+                style={{ 
+                  fontSize: 13, 
+                  color: '#059669', 
+                  fontWeight: 600, 
+                  textDecoration: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                LOGOUT
+              </Link>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: '#edfaf4', border: '1px solid #a7f3d0', borderRadius: 20, padding: '6px 14px' }}>
+                <Database size={12} color="#059669" />
+                <span style={{ fontSize: 11, color: '#059669', fontWeight: 700 }}>Data Import Portal</span>
+              </div>
             </div>
           </header>
 
