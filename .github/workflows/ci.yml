@@ -1,0 +1,35 @@
+name: BioFin CI Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20' # Next.js 推荐版本
+
+    - name: Install Dependencies
+      working-directory: ./biofin_nextjs
+      run: npm install
+
+    - name: Run Unit Tests
+      working-directory: ./biofin_nextjs
+      run: npm test --if-present
+
+    - name: Build Next.js Application
+      working-directory: ./biofin_nextjs
+      run: npm run build
+      env:
+        NEXT_TELEMETRY_DISABLED: 1
+        CI: true
