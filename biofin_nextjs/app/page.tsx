@@ -2144,8 +2144,16 @@ function BioFinOracleInner() {
                       <PulsingDot color="#059669" />
                       <span style={{ fontSize: 11, color: '#059669', fontWeight: 700, letterSpacing: '0.14em', textTransform: 'uppercase' as const }}>Critical Action Recommended</span>
                     </div>
-                    <h2 style={{ fontSize: 52, fontWeight: 800, letterSpacing: '-0.03em', color: '#065f46', lineHeight: 1.05, marginBottom: 32 }}>
-                      Advance<br />Harvest<br />by 48 Hours
+                    <h2 style={{ 
+                      fontSize: 52, 
+                      fontWeight: 800, 
+                      letterSpacing: '-0.03em', 
+                      color: '#065f46', 
+                      lineHeight: 1.05, 
+                      marginBottom: 32,
+                      whiteSpace: 'pre-line' // 👇 关键属性：这会让 AI 返回的 \n 变成真正的换行
+                    }}>
+                      {analysisResult?.criticalActionTitle || "Advance Harvest\nby 48 Hours"}
                     </h2>
                     <button
                       onClick={() => setActionExecuted(true)}

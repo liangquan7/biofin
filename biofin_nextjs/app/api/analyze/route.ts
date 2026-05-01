@@ -59,6 +59,7 @@ const analysisSchema = z.object({
       lossEstimate: z.number(), recoveryStrategy: z.string()
     }))
   }).optional(),
+  criticalActionTitle: z.string(),
   recommendation: z.string(),
   summary: z.object({
     totalDataPoints: z.number(), plantGrowthRecords: z.number(), envRecords: z.number(),
@@ -867,6 +868,7 @@ function buildDefaultResult(
       { label: 'Compliance Submission Deadline', status: 'warn',  detail: '18 days until Q2 deadline' },
       { label: 'e-Invoicing Version',            status: 'ok',    detail: 'Upgraded to MyInvois 2.1' },
     ],
+    criticalActionTitle: "Advance Harvest\nby 48 Hours",
     recommendation: 'Analysis engine initialised with default parameters. Upload farm data files for a personalised AI-driven recommendation.',
     // PATCH 5: replaced hardcoded arrays with shared exports from biofin.ts
     dynamicIntelligence: {
@@ -1082,6 +1084,7 @@ function sanitiseResult(raw: unknown, defaults: AnalysisResult): AnalysisResult 
       competitors: DEFAULT_COMPETITORS,
       stressTests:  DEFAULT_STRESS_TESTS,
     }),
+    criticalActionTitle: str_(r.criticalActionTitle, d.criticalActionTitle),
     recommendation: str_(r.recommendation, d.recommendation),
     summary: {
       totalDataPoints:    num_(sm.totalDataPoints,    d.summary.totalDataPoints),
@@ -1215,6 +1218,7 @@ These are the canonical financial constants for BioFin Oracle. Use these exact n
 6. **Risk Level**: Classify overall farm risk as "LOW", "MEDIUM", or "HIGH". Factor in crop-specific weather sensitivity, price volatility, and compliance gaps.
 7. **Dynamic Intelligence — Competitors**: Synthesise Tavily results to generate 2-4 competitor entries relevant to **${cropType}** in **${region}**. Each must include: name, threatLevel ("low"|"medium"|"high"|"critical"), insight (what they are doing), and recommendedAction. If no Tavily results are available, generate plausible competitors based on the **actual crop type** — e.g. for rice: Vietnam bulk importers, Thai Jasmine rice; for palm oil: Indonesian CPO; for durian: Thai B-grade supply chains. Do NOT default to durian competitors for non-durian crops.
 8. **Dynamic Intelligence — Stress Tests**: Generate 3-5 stress-test scenarios based on weather forecast data, market conditions, and the **specific crop's** risk profile. Scenarios must be crop-appropriate — e.g. for rice: flood/waterlogging, blast fungus, price floor intervention; for oil palm: fire hazard, CPO price collapse, replanting cycle cost. Each scenario requires: id (snake_case), title, impact, lossEstimate (negative RM), recoveryStrategy.
+9. **Critical Action Title**: Based on the recommendation, provide a short, punchy, 3-10 word action title for the dashboard header (e.g., "Advance Harvest\nby 48 Hours", "Lock Export Prices\nImmediately", "Trigger Insurance\nClaim Now"). You MUST use \n to create visual line breaks so the typography looks good.
 
 ## bioFertReduction Calculation:
 - Optimal fertilizer events for **${cropType}**: ~${ag.fertEventsPerYear}/year
@@ -1319,6 +1323,7 @@ The JSON must exactly match this TypeScript interface:
       { "id": string, "title": string, "impact": string, "lossEstimate": number, "recoveryStrategy": string }
     ]
   },
+  "criticalActionTitle": string,
   "recommendation": string,
   "summary": {
     "totalDataPoints": number, "plantGrowthRecords": number,

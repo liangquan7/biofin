@@ -231,6 +231,8 @@ export interface AnalysisResult {
 
   compliance: { label: string; status: 'ok' | 'warn' | 'error'; detail: string }[];
 
+  criticalActionTitle: string;
+
   recommendation: string;
 
   marketNews?: { query: string; title: string; snippet: string; url: string }[];
