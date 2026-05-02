@@ -10,7 +10,9 @@
     "test": "jest"
   },
   "dependencies": {
+    "@ai-sdk/google": "^3.0.67",
     "@ai-sdk/openai": "^3.0.54",
+    "@ai-sdk/openai-compatible": "^2.0.45",
     "@paralleldrive/cuid2": "^3.3.0",
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.37.0",

@@ -1,0 +1,7 @@
+date,harvest_weight_kg,grade_a_pct,grade_b_pct,seed_cost,fertilizer_cost,labor_cost,equipment_cost,market_price_per_kg,channel,volume_kg,revenue
+2026-01-31,0,0,0,0,1200,2400,350,62,,0,0
+2026-02-28,180,78,16,0,1500,2600,400,65,Local Market,160,10400
+2026-03-31,420,74,20,0,1800,3200,850,58,Local Market,380,22040
+2026-04-30,0,0,0,0,2400,4000,1500,55,,0,0
+2026-05-31,1200,62,28,0,2800,4800,1600,48,Singapore Export,1050,50400
+2026-06-30,950,70,22,0,1600,3200,650,52,Mixed,880,45760

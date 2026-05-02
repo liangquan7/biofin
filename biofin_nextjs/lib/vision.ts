@@ -10,7 +10,7 @@
  */
 
 const ANTHROPIC_VISION_URL   = 'https://api.anthropic.com/v1/messages';
-const ANTHROPIC_VISION_MODEL = 'claude-sonnet-4-20250514';
+const ANTHROPIC_VISION_MODEL = 'claude-sonnet-4-6';
 const ANTHROPIC_API_KEY      = process.env.ANTHROPIC_API_KEY ?? '';
 
 /** Claude Vision MIME types accepted by the messages API */

@@ -126,7 +126,7 @@ import { createId } from '@paralleldrive/cuid2';
 
 // PATCH 4 (Task 4): Python aggregator client replaces the four aggregateXxxDense() calls
 // See src/lib/biofin_aggregator_client.ts
-import { buildAggregatedPromptData } from '@/lib/biofin_aggregator_client';
+import { buildAggregatedPromptData, fetchRagContext } from '@/lib/biofin_aggregator_client';
 
 // ─── C-7 FIX: Real per-IP rate limiter on the analyze endpoint ───────────────
 // Previously this was a stub that always returned { allowed: true }, meaning
@@ -239,6 +239,13 @@ interface FinancialRecord {
   [key: string]: string | undefined;
 }
 
+// --- Image vs Data file routing -----------------------------------------------
+
+function isImageFile(file: File): boolean {
+  if (file.type && file.type.startsWith('image/')) return true;
+  return /\.(jpeg|jpg|png|webp|heif|heic|gif)$/i.test(file.name);
+}
+
 // --- CSV / JSON Parsers -------------------------------------------------------
 
 // Bug #4 fix: state-machine parser that correctly handles quoted fields
@@ -320,7 +327,7 @@ async function readFile(file: File): Promise<Record<string, string>[]> {
 type AnthropicImageMediaType = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
 
 const ANTHROPIC_VISION_URL    = 'https://api.anthropic.com/v1/messages';
-const ANTHROPIC_VISION_MODEL  = 'claude-sonnet-4-20250514';
+const ANTHROPIC_VISION_MODEL  = 'claude-sonnet-4-6';
 const ANTHROPIC_API_KEY       = process.env.ANTHROPIC_API_KEY ?? '';
 
 async function readFileOrImage(file: File): Promise<Record<string, string>[]> {
@@ -1347,6 +1354,7 @@ function buildUserPrompt(
   counts:     { envGeo: number; bioCrop: number; operations: number; financial: number; files: number },
   realWeatherText: string,
   aggregatedDataBlock: string,   // Task 4: replaces denseEnvGeo+denseBioCrop+denseOperations+denseFinancial
+  ragPromptBlock:     string,   // RAG: industry guidelines retrieved from knowledge base
   cropType: string,
   region:   string,
   analysisId: string,
@@ -1421,6 +1429,11 @@ function buildUserPrompt(
   // help the LLM detect seasonality and outliers without hitting token limits.
   if (aggregatedDataBlock && aggregatedDataBlock !== 'NO_DATA_UPLOADED — use conservative defaults for all fields.') {
     sections.push(`\n## Aggregated Statistical Summary (Python Pre-processing)\n<user_data>\n${aggregatedDataBlock}\n</user_data>`);
+  }
+
+  // RAG: Industry guidelines from the local knowledge base
+  if (ragPromptBlock) {
+    sections.push(`\n${ragPromptBlock}`);
   }
 
   sections.push(`\n## Live Market Intelligence (Tavily Web Search Results)
@@ -1535,6 +1548,12 @@ export async function POST(request: NextRequest) {
       let operationsFileArr: File[] = [];
       let financialFileArr:  File[] = [];
 
+      // Data-only arrays (images filtered out) — sent to the Python aggregator
+      let envGeoDataFiles:     File[] = [];
+      let bioCropDataFiles:    File[] = [];
+      let operationsDataFiles: File[] = [];
+      let financialDataFiles:  File[] = [];
+
       try {
         const formData = await request.formData();
 
@@ -1543,6 +1562,12 @@ export async function POST(request: NextRequest) {
         bioCropFileArr    = formData.getAll('bioCropData')     as File[];
         operationsFileArr = formData.getAll('operationsData')  as File[];
         financialFileArr  = formData.getAll('financialData')   as File[];
+
+        // Route files: separate images (→ Vision API) from data files (→ Aggregator)
+        envGeoDataFiles     = envGeoFileArr.filter(f => !isImageFile(f));
+        bioCropDataFiles    = bioCropFileArr.filter(f => !isImageFile(f));
+        operationsDataFiles = operationsFileArr.filter(f => !isImageFile(f));
+        financialDataFiles  = financialFileArr.filter(f => !isImageFile(f));
 
         // Count how many categories have at least one file
         filesUploaded = [envGeoFileArr, bioCropFileArr, operationsFileArr, financialFileArr]
@@ -1579,10 +1604,10 @@ export async function POST(request: NextRequest) {
 
         // Parse all four categories in parallel
         [envGeoRows, bioCropRows, operationsRows, financialRows] = await Promise.all([
-          envGeoFileArr.length     ? readAllFiles(envGeoFileArr,     true)  : Promise.resolve([]),
-          bioCropFileArr.length    ? readAllFiles(bioCropFileArr,    true)  : Promise.resolve([]),
-          operationsFileArr.length ? readAllFiles(operationsFileArr, false) : Promise.resolve([]),
-          financialFileArr.length  ? readAllFiles(financialFileArr,  false) : Promise.resolve([]),
+          envGeoFileArr.length       ? readAllFiles(envGeoFileArr,       true)  : Promise.resolve([]),
+          bioCropFileArr.length      ? readAllFiles(bioCropFileArr,      true)  : Promise.resolve([]),
+          operationsDataFiles.length ? readAllFiles(operationsDataFiles, false) : Promise.resolve([]), // Use data-only array
+          financialDataFiles.length  ? readAllFiles(financialDataFiles,  false) : Promise.resolve([]), // Use data-only array
         ]);
 
         stage({
@@ -1673,10 +1698,10 @@ export async function POST(request: NextRequest) {
       });
 
       const aggregatorPromise = buildAggregatedPromptData({
-        envGeoFile:     envGeoFileArr[0]     ?? null,
-        bioCropFile:    bioCropFileArr[0]    ?? null,
-        operationsFile: operationsFileArr[0] ?? null,
-        financialFile:  financialFileArr[0]  ?? null,
+        envGeoFile:     envGeoDataFiles[0]     ?? null,
+        bioCropFile:    bioCropDataFiles[0]    ?? null,
+        operationsFile: operationsDataFiles[0] ?? null,
+        financialFile:  financialDataFiles[0]  ?? null,
       }).catch(err => {
         console.warn('[BioFin Aggregator] Sidecar unavailable, falling back to JS summaries:', err);
         return { data: null, promptBlock: '', totalSourceRecords: 0 };
@@ -1737,9 +1762,21 @@ export async function POST(request: NextRequest) {
       // an empty string signals buildUserPrompt to omit the aggregated section.
       const aggregatedDataBlock = aggregatorResult?.promptBlock ?? '';
 
+      // ── RAG: fetch industry guidelines from knowledge base ──────────────────
+      // Runs after aggregation completes so we can pass the structured data to
+      // /rag_query. Degrades gracefully — empty string if the endpoint fails.
+      let ragPromptBlock = '';
+      if (aggregatorResult?.data) {
+        try {
+          ragPromptBlock = await fetchRagContext(aggregatorResult.data);
+        } catch (ragErr) {
+          console.warn('[BioFin RAG] fetchRagContext threw — proceeding without RAG:', ragErr);
+        }
+      }
+
       stage({
         stage:    'searching',
-        message:  `Data sources ready — weather: ${realWeatherDetails ? 'OK' : 'fallback'}, market: ${marketNews.length} article${marketNews.length !== 1 ? 's' : ''}, aggregator: ${aggregatedDataBlock ? 'OK' : 'fallback'}`,
+        message:  `Data sources ready — weather: ${realWeatherDetails ? 'OK' : 'fallback'}, market: ${marketNews.length} article${marketNews.length !== 1 ? 's' : ''}, aggregator: ${aggregatedDataBlock ? 'OK' : 'fallback'}, RAG: ${ragPromptBlock ? 'OK' : 'off'}`,
         progress: 48,
       });
 
@@ -1778,6 +1815,7 @@ export async function POST(request: NextRequest) {
           },
           weatherPromptText,
           aggregatedDataBlock,   // Task 4: replaces the four denseXxx strings
+          ragPromptBlock,        // RAG: industry guidelines
           cropType,
           region,
           analysisId,
@@ -1792,6 +1830,7 @@ export async function POST(request: NextRequest) {
           model: openaiCompatible(ZAI_MODEL),
           schema: analysisSchema,
           system: systemPrompt,
+          maxOutputTokens: 8192,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user',   content: userPrompt   },

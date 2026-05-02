@@ -1,0 +1,9 @@
+date,crop_variety,strain,sowing_date,expected_harvest_date,image_filename,image_label
+2026-01-15,Durian,Musang King (D197),2019-06-15,2026-06-30,DJI_Fly_001.jpg,healthy_canopy
+2026-02-15,Durian,Musang King (D197),2019-06-15,2026-06-30,DJI_Fly_002.jpg,flowering_peak
+2026-03-15,Durian,Musang King (D197),2019-06-15,2026-06-30,DJI_Fly_003.jpg,fruit_set_normal
+2026-04-15,Durian,Musang King (D197),2019-06-15,2026-06-30,DJI_Fly_004.jpg,heat_stress_detected
+2026-05-10,Durian,Musang King (D197),2019-06-15,2026-06-30,DJI_Fly_005.jpg,phytophthora_detected
+2026-05-25,Durian,Musang King (D197),2019-06-15,2026-06-30,DJI_Fly_006.jpg,water_stress_moderate
+2026-06-15,Durian,Musang King (D197),2019-06-15,2026-06-30,DJI_Fly_007.jpg,recovering_canopy
+2026-06-28,Durian,Musang King (D197),2019-06-15,2026-06-30,DJI_Fly_008.jpg,healthy_canopy

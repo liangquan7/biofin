@@ -1464,7 +1464,7 @@ function BioFinOracleInner() {
   const weatherScenarios = {
     rain:    { label: 'Heavy Downpour',        yar: 42, recoveryCost: 18000, coverage: 12000, emoji: '🌧', color: '#3b82f6' },
     drought: { label: 'Prolonged Drought',      yar: 65, recoveryCost: 28000, coverage: 15000, emoji: '☀️', color: '#ef4444' },
-    wind:    { label: 'Category 10 Windstorm',  yar: 28, recoveryCost:  8500, coverage: 10000, emoji: '🌀', color: '#7c3aed' },
+    wind:    { label: 'Windstorm',  yar: 28, recoveryCost:  8500, coverage: 10000, emoji: '🌀', color: '#7c3aed' },
   };
   const wx = weatherEvent2 ? weatherScenarios[weatherEvent2] : null;
   const insuranceGap = wx ? Math.max(0, wx.recoveryCost - wx.coverage) : 0;
@@ -3070,7 +3070,7 @@ function BioFinOracleInner() {
                 {/* ROI formula: payback = systemCost / monthlySavings; annualizedROI = (monthlySavings / systemCost) * 100 */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   {(() => {
-                    const effectiveSalary = analysisResult?.financial.laborCost ?? staffSalary;
+                    const effectiveSalary = staffSalary;
                     const monthlySavings  = effectiveSalary * BIOFIN_CONSTANTS.LABOR_AUTOMATION_RATE;
                     const systemCost      = BIOFIN_CONSTANTS.SYSTEM_MONTHLY_COST_RM;
                     const efficiencyGain  = analysisResult?.plantHealth.bioHealthIndex
@@ -3106,7 +3106,7 @@ function BioFinOracleInner() {
                   <div style={{ fontSize: 11, color: '#059669', fontWeight: 700, marginBottom: 6 }}>System Value Summary</div>
                   <p style={{ fontSize: 12.5, color: '#4d7a62', lineHeight: 1.7, margin: 0 }}>
                     {(() => {
-                      const effectiveSalary = analysisResult?.financial.laborCost ?? staffSalary;
+                      const effectiveSalary = staffSalary;
                       const savings = effectiveSalary * BIOFIN_CONSTANTS.LABOR_AUTOMATION_RATE;
                       const sysCost = BIOFIN_CONSTANTS.SYSTEM_MONTHLY_COST_RM;
                       // ── C-1 FIX applied here too ──────────────────────────

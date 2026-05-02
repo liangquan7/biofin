@@ -61,6 +61,18 @@ from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 import uvicorn
 
+# RAG pipeline — imported lazily so the sidecar still boots if
+# sentence-transformers / chromadb are not yet installed.
+try:
+    from rag_pipeline import (
+        build_full_rag_prompt,
+        ensure_knowledge_base,
+        ingest_knowledge_base,
+    )
+    _RAG_AVAILABLE = True
+except ImportError:
+    _RAG_AVAILABLE = False
+
 
 # ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -169,6 +181,63 @@ async def aggregate_endpoint(
             {"error": str(exc), "fallback": True},
             status_code=422,
         )
+
+
+# ─── RAG Endpoints ───────────────────────────────────────────────────────────
+
+@app.post("/rag_ingest")
+async def rag_ingest_endpoint(request: Request) -> JSONResponse:
+    """(Re)build the ChromaDB knowledge base from knowledge_base/*.md files."""
+    if not _RAG_AVAILABLE:
+        return JSONResponse(
+            {"error": "RAG dependencies not installed. Run: pip install sentence-transformers chromadb"},
+            status_code=501,
+        )
+    try:
+        body = await request.json() if await request.body() else {}
+        force = body.get("force_rebuild", False)
+        result = ingest_knowledge_base(force_rebuild=force)
+        return JSONResponse(result)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.post("/rag_query")
+async def rag_query_endpoint(request: Request) -> JSONResponse:
+    """
+    Accept aggregated data from the four categories (JSON body) and return
+    the top-k most relevant industry guideline texts as a prompt block.
+
+    Expected body:
+    {
+      "env_geo":     { ... },   // output from /aggregate?category=env_geo
+      "bio_crop":    { ... },
+      "operations":  { ... },
+      "financial":   { ... },
+      "top_k":       3          // optional, default 3
+    }
+    """
+    if not _RAG_AVAILABLE:
+        return JSONResponse(
+            {"error": "RAG dependencies not installed. Run: pip install sentence-transformers chromadb"},
+            status_code=501,
+        )
+    try:
+        body = await request.json()
+        top_k = body.pop("top_k", 3)
+        result = build_full_rag_prompt(body, top_k=top_k)
+        return JSONResponse(result)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@app.on_event("startup")
+async def _startup_rag() -> None:
+    """Auto-ingest knowledge base on first boot if ChromaDB is empty."""
+    if _RAG_AVAILABLE:
+        import asyncio
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(None, ensure_knowledge_base)
 
 # ─── Loader ───────────────────────────────────────────────────────────────────
 

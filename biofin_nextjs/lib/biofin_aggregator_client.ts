@@ -183,6 +183,21 @@ if (tooLargeEntry) {
 // ─── HTTP call to sidecar ─────────────────────────────────────────────────────
 
 async function callAggregator(file: File, category: string): Promise<CategorySummary> {
+  // Defensive: reject image files that slipped through routing
+  if (file.type?.startsWith('image/') || /\.(jpg|jpeg|png|webp|heif|heic|gif)$/i.test(file.name)) {
+    return {
+      category,
+      source_file:        file.name,
+      total_records:      0,
+      columns_detected:   [],
+      time_range:         {},
+      historical_summary: {},
+      recent_data:        [],
+      fallback:           true,
+      error:              `Skipped image file "${file.name}" — images must go through Vision API, not the aggregator.`,
+    };
+  }
+
   const form = new FormData();
   form.append('file',     file);
   form.append('category', category);
@@ -430,6 +445,79 @@ function buildFinancialBlock(cat: CategorySummary): string {
   }
 
   return lines.join('\n');
+}
+
+// ─── RAG Query ──────────────────────────────────────────────────────────────────
+//
+// Calls POST /rag_query on the Python sidecar, passing the aggregated data
+// from all four categories. Returns a prompt_block string containing retrieved
+// industry guidelines from the knowledge base.
+//
+// Graceful degradation: if the sidecar is unavailable or the RAG pipeline
+// hasn't been initialised, returns an empty string so the LLM proceeds
+// without RAG context.
+
+interface RagQueryResponse {
+  query:           string;
+  retrieved_count: number;
+  retrieved_texts: Array<{
+    text:            string;
+    source:          string;
+    section:         string;
+    relevance_score: number;
+  }>;
+  prompt_block: string;
+}
+
+const RAG_TIMEOUT_MS = 15_000;
+
+export async function fetchRagContext(data: AggregatedData): Promise<string> {
+  const hasRealData = (Object.values(data) as (CategorySummary | null)[]).some(
+    cat => cat != null && cat.fallback !== true && cat.total_records > 0
+  );
+  if (!hasRealData) return '';
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), RAG_TIMEOUT_MS);
+
+    const res = await fetch(`${AGGREGATOR_URL}/rag_query`, {
+      method: 'POST',
+      headers: {
+        'Content-Type':    'application/json',
+        'X-Sidecar-Token': process.env.BIOFIN_SIDECAR_SECRET ?? '',
+      },
+      body: JSON.stringify({
+        env_geo:    data.env_geo,
+        bio_crop:   data.bio_crop,
+        operations: data.operations,
+        financial:  data.financial,
+        top_k:      3,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timer);
+
+    if (!res.ok) {
+      console.warn(`[BioFin RAG] /rag_query returned HTTP ${res.status}: ${await res.text()}`);
+      return '';
+    }
+
+    const result = (await res.json()) as RagQueryResponse;
+
+    if (!result.prompt_block) return '';
+
+    console.log(
+      `[BioFin RAG] Retrieved ${result.retrieved_count} industry guidelines ` +
+      `(query: "${result.query.slice(0, 80)}…")`
+    );
+    return result.prompt_block;
+
+  } catch (err) {
+    console.warn('[BioFin RAG] /rag_query failed — proceeding without RAG context:', err);
+    return '';
+  }
 }
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
